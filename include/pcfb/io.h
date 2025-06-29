@@ -16,6 +16,12 @@ need `#include <pcfb/io.h>` to access everything equired for loading/saving
 #include <vector>
 #include <fstream>
 #include <memory>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <cstring>
+#include <utility>
 
 #include "pcfb_v1_generated.h" // FlatBuffer generated accessors.
 
@@ -32,6 +38,8 @@ struct Error {
         IoError,          ///< Could not read / write the requested file.
         VerificationFailed, ///< FlatBuffers verifier failed.
         InvalidBuffer,    ///< Buffer nullptr, size 0, or incorrect identifier.
+        StatFailed,       ///< fstat failed when mmapping a file
+        MapFailed,        ///< mmap failed
         Unknown           ///< Catch-all.
     } code{Code::Unknown};
 
@@ -62,14 +70,10 @@ public:
 
     /// Construct from a raw root pointer (caller must ensure lifetime of the
     /// underlying memory).
-    explicit Circuit(const pcfb::Circuit *root) noexcept : root_(root) {}
+    explicit Circuit(const pcfb::Circuit *root) noexcept : root_(root), base_(reinterpret_cast<const std::byte*>(root)) {}
 
-    /// Construct by taking shared ownership of a backing buffer.
-    explicit Circuit(std::shared_ptr<const std::vector<std::byte>> buffer) noexcept
-        : root_(buffer ? flatbuffers::GetRoot<pcfb::Circuit>(
-                            reinterpret_cast<const uint8_t*>(buffer->data()))
-                       : nullptr),
-          owned_buffer_(std::move(buffer)) {}
+    /// Constructor from base ptr, root ptr, size
+    Circuit(const std::byte* base, const pcfb::Circuit *root, size_t sz) noexcept : root_(root), base_(base), size_(sz) {}
 
     /// Access underlying generated accessor – convenience.
     [[nodiscard]] const pcfb::Circuit *operator->() const noexcept { return root_; }
@@ -78,15 +82,26 @@ public:
     /// True iff the view points at a valid root.
     [[nodiscard]] bool valid() const noexcept { return root_ != nullptr; }
 
-    /// Return the shared backing buffer if the view owns one, else nullptr.
-    [[nodiscard]] std::shared_ptr<const std::vector<std::byte>> buffer() const noexcept {
-        return owned_buffer_;
+    /// Size in bytes of the underlying buffer (needed for serialization).
+    [[nodiscard]] size_t size() const noexcept { return size_; }
+
+    /// Raw pointer to underlying bytes (read-only).
+    [[nodiscard]] const std::byte *data() const noexcept {
+        return base_;
+    }
+
+    void _adopt_map(std::unique_ptr<pcfb::io::detail::MMap> mmap) noexcept {
+        size_ = mmap ? mmap->size() : size_;
+        base_ = mmap ? reinterpret_cast<const std::byte*>(mmap->data()) : base_;
+        map_ = std::move(mmap);
     }
 
 private:
     const pcfb::Circuit *root_{};
-    // Owns the buffer for views created by IO helpers (optional, may be null).
-    std::shared_ptr<const std::vector<std::byte>> owned_buffer_{};
+    const std::byte *base_{}; // pointer to beginning of buffer
+    size_t size_{}; // total bytes in buffer
+    // mmap ownership (null if view is non-owning)
+    std::unique_ptr<pcfb::io::detail::MMap> map_{};
 
     // Note: IO helpers live in a sibling namespace and manipulate the private
     // ownership fields via Circuit's public API or by declaring suitable
@@ -124,6 +139,71 @@ namespace pcfb::io {
 
 namespace detail {
 
+// RAII wrapper for POSIX mmap'ed read-only file region
+class MMap {
+public:
+    static std::expected<std::unique_ptr<MMap>, Error> map_file(const std::filesystem::path &p) {
+        int fd = ::open(p.c_str(), O_RDONLY);
+        if (fd == -1) {
+            return std::unexpected(Error{Error::Code::IoError, std::string("open failed: ")+ std::strerror(errno)});
+        }
+
+        struct stat st{};
+        if (::fstat(fd, &st) != 0) {
+            ::close(fd);
+            return std::unexpected(Error{Error::Code::StatFailed, std::string("fstat failed: ")+ std::strerror(errno)});
+        }
+
+        size_t size = static_cast<size_t>(st.st_size);
+        if (size == 0) {
+            ::close(fd);
+            return std::unexpected(Error{Error::Code::IoError, "file is empty"});
+        }
+
+        void *addr = ::mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
+        if (addr == MAP_FAILED) {
+            ::close(fd);
+            return std::unexpected(Error{Error::Code::MapFailed, std::string("mmap failed: ")+ std::strerror(errno)});
+        }
+
+        return std::unique_ptr<MMap>(new MMap(fd, addr, size));
+    }
+
+    ~MMap() {
+        if (addr_) {
+            ::munmap(addr_, size_);
+        }
+        if (fd_ != -1) {
+            ::close(fd_);
+        }
+    }
+
+    MMap(const MMap&) = delete;
+    MMap &operator=(const MMap&) = delete;
+    MMap(MMap&& other) noexcept : fd_(other.fd_), addr_(other.addr_), size_(other.size_) {
+        other.fd_ = -1; other.addr_ = nullptr; other.size_ = 0;
+    }
+    MMap& operator=(MMap&& other) noexcept {
+        if (this!=&other) {
+            this->~MMap();
+            fd_=other.fd_; addr_=other.addr_; size_=other.size_;
+            other.fd_=-1; other.addr_=nullptr; other.size_=0;
+        }
+        return *this;
+    }
+
+    [[nodiscard]] const void *data() const noexcept { return addr_; }
+    [[nodiscard]] size_t      size() const noexcept { return size_; }
+
+private:
+    MMap(int fd, void *addr, size_t s) : fd_(fd), addr_(addr), size_(s) {}
+    int fd_{-1};
+    void *addr_{};
+    size_t size_{};
+};
+
+// Small helper: verifies that the supplied buffer contains a valid PCFB Circuit
+// flatbuffer.
 inline bool verify_buffer(const uint8_t *data, size_t size) {
     flatbuffers::Verifier verifier(data, size);
     return pcfb::VerifyCircuitBuffer(verifier);
@@ -143,50 +223,37 @@ inline Result<ir::Circuit> from_bytes(std::span<const std::byte> buffer) {
         return std::unexpected(Error{Error::Code::VerificationFailed, "FlatBuffer verification failed"});
     }
 
-    // Copy into an owning buffer so returned Circuit manages lifetime.
-    auto owned_vec = std::make_shared<std::vector<std::byte>>(buffer.begin(), buffer.end());
-
-    return ir::Circuit(std::const_pointer_cast<const std::vector<std::byte>>(owned_vec));
+    return ir::Circuit(reinterpret_cast<const std::byte*>(data), flatbuffers::GetRoot<pcfb::Circuit>(data), size);
 }
 
 inline Result<ir::Circuit> read(const std::filesystem::path &file_path) {
-    std::ifstream file(file_path, std::ios::binary | std::ios::ate);
-    if (!file) {
-        return std::unexpected(Error{Error::Code::IoError, "Cannot open file: " + file_path.string()});
+    auto mmap_or_err = detail::MMap::map_file(file_path);
+    if (!mmap_or_err) {
+        return std::unexpected(mmap_or_err.error());
     }
 
-    const std::streamsize size = file.tellg();
-    if (size <= 0) {
-        return std::unexpected(Error{Error::Code::IoError, "File is empty: " + file_path.string()});
-    }
-    file.seekg(0, std::ios::beg);
+    std::unique_ptr<detail::MMap> map = std::move(*mmap_or_err);
 
-    std::vector<std::byte> buffer(static_cast<size_t>(size));
-    if (!file.read(reinterpret_cast<char *>(buffer.data()), size)) {
-        return std::unexpected(Error{Error::Code::IoError, "Failed to read file: " + file_path.string()});
-    }
-
-    auto owned_vec = std::make_shared<std::vector<std::byte>>(std::move(buffer));
-
-    const uint8_t *data = reinterpret_cast<const uint8_t *>(owned_vec->data());
-    if (!detail::verify_buffer(data, owned_vec->size())) {
+    const uint8_t *data = reinterpret_cast<const uint8_t *>(map->data());
+    size_t size = map->size();
+    if (!detail::verify_buffer(data, size)) {
         return std::unexpected(Error{Error::Code::VerificationFailed, "FlatBuffer verification failed for " + file_path.string()});
     }
 
-    return ir::Circuit(owned_vec);
+    ir::Circuit circuit(reinterpret_cast<const std::byte*>(data), flatbuffers::GetRoot<pcfb::Circuit>(data), size);
+    circuit._adopt_map(std::move(map));
+    return circuit;
 }
 
 inline Result<std::vector<std::byte>> to_bytes(const ir::Circuit &circuit) {
-    if (!circuit.valid()) {
-        return std::unexpected(Error{Error::Code::InvalidBuffer, "Circuit view is null"});
+    const std::byte *ptr = circuit.data();
+    if (ptr == nullptr || circuit.size()==0) {
+        return std::unexpected(Error{Error::Code::InvalidBuffer, "Circuit has no backing buffer"});
     }
 
-    auto buf_ptr = circuit.buffer();
-    if (!buf_ptr) {
-        return std::unexpected(Error{Error::Code::InvalidBuffer, "Circuit does not own a backing buffer; rebuilding not implemented"});
-    }
-
-    return *buf_ptr; // copy
+    std::vector<std::byte> out(circuit.size());
+    std::memcpy(out.data(), ptr, circuit.size());
+    return out;
 }
 
 inline Result<void> write(const ir::Circuit &circuit, const std::filesystem::path &file_path) {
