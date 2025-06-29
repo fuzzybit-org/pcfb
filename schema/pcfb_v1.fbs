@@ -1,6 +1,6 @@
 namespace pcfb;
 
-file_identifier "PCFB1"; // This corresponds to the version (1).
+file_identifier "PCF1"; // This corresponds to the version (1).
 file_extension "pcfb"; // File extension of any written files.
 
 enum TensorType: ubyte {

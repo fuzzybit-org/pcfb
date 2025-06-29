@@ -7,12 +7,12 @@ FetchContent_MakeAvailable(flatbuffers)
 
 # Define the input and output files
 set(FBS_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../schema/pcfb_v1.fbs)
-set(GENERATED_HEADER ${CMAKE_CURRENT_SOURCE_DIR}/../include/pcfb_flatbuffer.h)
+set(GENERATED_HEADER ${CMAKE_CURRENT_SOURCE_DIR}/../include/pcfb_v1_generated.h)
 
 # Add custom command to generate C++ files from FlatBuffer schema
 add_custom_command(
         OUTPUT ${GENERATED_HEADER}
-        COMMAND flatc --cpp --scoped-enums --gen-mutable --gen-object-api -o ${CMAKE_CURRENT_SOURCE_DIR} ${FBS_FILE}
+        COMMAND flatc --cpp --scoped-enums --gen-mutable --gen-object-api -o "${CMAKE_CURRENT_SOURCE_DIR}/../include/" ${FBS_FILE}
         DEPENDS ${FBS_FILE} flatc
         COMMENT "Generating PCFB C++ headers from FlatBuffer schema"
         VERBATIM
@@ -24,8 +24,21 @@ add_custom_target(pcfb_cpp_headers
         COMMENT "Generate PCFB C++ FlatBuffer headers"
 )
 
-# Add the generated header to the pcfb library if you plan to create one
-# Uncomment and modify as needed:
-add_library(pcfb ${GENERATED_HEADER})
-target_include_directories(pcfb PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(pcfb PUBLIC flatbuffers)
+# -----------------------------------------------------------------------------
+# Header-only INTERFACE library exposing the generated FlatBuffer header
+# -----------------------------------------------------------------------------
+
+# Build interface target and attach the header-generation step to it.
+add_library(pcfb INTERFACE)
+
+# Ensure the FlatBuffer code is generated before anything depends on the
+# interface. This is enough because INTERFACE libraries don't participate in
+# the build graph directly, so we make the dependency explicit here.
+add_dependencies(pcfb pcfb_cpp_headers)
+
+target_include_directories(pcfb INTERFACE
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
+
+target_link_libraries(pcfb INTERFACE flatbuffers)
