@@ -5,6 +5,8 @@
 // header in the install tree.
 #include "pcfb_v1_generated.h"
 #include "pcfb/io.h"
+#include "pcfb/error.h"
+#include "pcfb/ir/circuit.h"
 
 namespace pcfb {
 

@@ -39,7 +39,9 @@ set(PCFB_INCLUDE_INSTALL_DIR ${CMAKE_INSTALL_INCLUDEDIR} CACHE PATH "Location of
 set(PCFB_PUBLIC_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/include/pcfb.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/pcfb_v1_generated.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/pcfb/io.h)
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/pcfb/io.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/pcfb/error.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/pcfb/ir/circuit.h)
 
 # Install the header-only INTERFACE target and its public headers.
 install(TARGETS pcfb EXPORT pcfbTargets

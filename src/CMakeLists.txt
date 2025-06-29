@@ -25,20 +25,22 @@ add_custom_target(pcfb_cpp_headers
 )
 
 # -----------------------------------------------------------------------------
-# Header-only INTERFACE library exposing the generated FlatBuffer header
+# Static library with implementation sources
 # -----------------------------------------------------------------------------
 
-# Build interface target and attach the header-generation step to it.
-add_library(pcfb INTERFACE)
-
-# Ensure the FlatBuffer code is generated before anything depends on the
-# interface. This is enough because INTERFACE libraries don't participate in
-# the build graph directly, so we make the dependency explicit here.
-add_dependencies(pcfb pcfb_cpp_headers)
-
-target_include_directories(pcfb INTERFACE
-    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+set(PCFB_SRC
+    ${CMAKE_CURRENT_SOURCE_DIR}/io.cpp
 )
 
-target_link_libraries(pcfb INTERFACE flatbuffers)
+add_library(pcfb STATIC ${PCFB_SRC})
+
+# Generated headers must be available before compilation
+add_dependencies(pcfb pcfb_cpp_headers)
+
+target_include_directories(pcfb
+    PUBLIC
+        $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
+
+target_link_libraries(pcfb PUBLIC flatbuffers)
