@@ -1,6 +1,12 @@
 # pcfb
 a library for representing probabilistic circuits as tensors. single source of truth for the probabilistic circuit flatbuffer PCFB schema
 
+## Build
+```shell
+mkdir build && cd build
+cmake -DPCFB_BUILD_TESTS=ON .. && cmake --build . && ctest
+```
+
 ## Schema Layout
 ```mermaid
 erDiagram
@@ -112,11 +118,6 @@ erDiagram
         ubyte FLOAT32
         ubyte FLOAT64
     }
-```
-## Build
-```shell
-mkdir build && cd build
-cmake -DPCFB_BUILD_TESTS=ON .. && cmake --build . && ctest
 ```
 
 ```
