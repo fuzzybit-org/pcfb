@@ -31,3 +31,8 @@ pcfb:
   inputs: [`.pcfb` files, `::pcfb:ir`]
   outputs: [`.pcfb` files, `::pcfb:ir`]
 ```
+
+```shell
+mkdir build && cd build
+cmake -DPCFB_BUILD_TESTS=ON .. && cmake --build . && ctest
+```
