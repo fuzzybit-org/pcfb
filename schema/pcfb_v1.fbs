@@ -1,0 +1,178 @@
+namespace pcfb;
+
+file_identifier "PCFB1"; // This corresponds to the version (1).
+file_extension "pcfb"; // File extension of any written files.
+
+enum TensorType: ubyte {
+  UINT4  = 0x04, // 0b 0000 0100
+  UINT8  = 0x08, // 0b 0000 1000
+  UINT16 = 0x10, // 0b 0001 0000
+  UINT32 = 0x40, // 0b 0100 0000
+  UINT64 = 0x00, // 0b 0000 0000 <---- DEFAULT
+
+  FLOAT16 = 0x90, // 0b 1001 0000
+  FLOAT32 = 0xA0, // 0b 1010 0000
+  FLOAT64 = 0xC0, // 0b 1100 0000
+}
+
+table Tensor {
+  // The tensor shape, assuming rank is always non-null
+  shape: [uint32]; // usigned 32-bit integer (4,294,967,295 max)
+  type: TensorType;
+  // An index that refers to the buffers table at the root of the model. Or,
+  // if there is no data buffer associated (i.e. intermediate results), then
+  // this is 0 (which refers to an always existent empty buffer).
+  //
+  // The data_buffer itself is an opaque container, with the assumption that the
+  // target device is little-endian. In addition, all builtin operators assume
+  // the memory is ordered such that if `shape` is [4, 3, 2], then index
+  // [i, j, k] maps to data_buffer[i*3*2 + j*2 + k].
+  buffer_idx: uint32;
+  name: string; // optional; for debugging
+}
+
+// About endian-ness
+// the address of a multi-byte value is the address of its first byte (the byte with the lowest address);
+// little-endian systems of that type have the property that, for sufficiently low data values, the same value can be
+// read from memory at different lengths without using different addresses (even when alignment restrictions are
+// imposed). For example, a 32-bit memory location with content 4A 00 00 00 can be read at the same address as either
+// 8-bit (value = 4A), 16-bit (004A), 24-bit (00004A), or 32-bit (0000004A), all of which retain the same numeric value.
+
+
+enum OpCode : ubyte {
+    // bitwise -----------------> 0000 ___0
+    BITWISE_NO_OP   = 0x00, // 0b 0000 0000 : Z = A. Passes input A directly to output.
+    BITWISE_AND     = 0x02, // 0b 0000 0010 : Z = A • B
+    BITWISE_OR      = 0x04, // 0b 0000 0100 : Z = A | B
+    BITWISE_XOR     = 0x06, // 0b 0000 0110 : Z = A ⊕ B = (A' • B) | (A • B'). True if A and B differ.
+    // bitwise-negations -------> 0000 ___1
+    BITWISE_NOT     = 0x01, // 0b 0000 0001 : Z = A'. Inverts the input.
+    BITWISE_NAND    = 0x03, // 0b 0000 0011 : Z = (A • B)' = A' | B'. Equivalent to NOT(AND).
+    BITWISE_NOR     = 0x05, // 0b 0000 0101 : Z = (A | B)' = A' • B'. Equivalent to NOT(OR).
+    BITWISE_XNOR    = 0x07, // 0b 0000 0111 : Z = (A • B) | (A' • B'). True if A and B are equal.
+    // bitwise-counts ----------> 0000 ____
+    BITWISE_ATLEAST = 0x08, // 0b 0000 1000 : Z = 1 if sum(inputs) >= k. True if at least k inputs are true.
+    BITWISE_ATMOST  = 0x09, // 0b 0000 1001 : Z = 1 if sum(inputs) <= k. True if at most k inputs are true.
+    BITWISE_EXACTLY = 0x0A, // 0b 0000 1010 : Z = 1 if sum(inputs) == k. True if exactly k inputs are true.
+    // bitwise-constants -------> 0001 ____
+    BITWISE_ZEROS   = 0x10, // 0b 0001 0000
+    BITWISE_ONES    = 0x11, // 0b 0001 0001
+    BITWISE_EVENS   = 0x1A, // 0b 0001 1010  // 1010101010
+    BITWISE_ODDS    = 0x15, // 0b 0001 0101  // 0101010101
+    // convolution
+    BITWISE_CONV_ND = 0x20, // 0b 0010 0000
+    BITWISE_CONV_1D = 0x21, // 0b 0010 0001
+    BITWISE_CONV_2D = 0x22, // 0b 0010 0010
+    // fft
+    BITWISE_FFT_ND  = 0x40, // 0b 0100 0000
+    BITWISE_FFT_1D  = 0x41, // 0b 0100 0001
+    BITWISE_FFT_2D  = 0x42, // 0b 0100 0010
+
+    // multi-output, can be cascaded for higher bit-count
+    // bitwise-exotics ---------> 0011 ____ : Z = (A • X) | (B • X'). Selects A if X=1, B if X=0.
+    BITWISE_MUXED   = 0x30, // 0b 0011 0000 : Z0 = A • X', Z1 = A • X. Routes A to Z0 if X=0, to Z1 if X=1.
+    BITWISE_DEMUX   = 0x31, // 0b 0011 0001
+
+    /**< @brief N-bit Comparator operation.
+     *  @details GT = A • B', EQ = (A ⊕ B)', LT = A' • B.
+     *  For 1-bit: outputs are {GT, EQ, LT} = {A > B, A == B, A < B}.
+     *  @code
+     *  // GT = A & ~B
+     *  // EQ = ~(A ^ B)
+     *  // LT = ~A & B
+     *  @endcode
+     */
+    COMPARATOR      = 0x34, // 0b 0011 0100
+
+    /**< @brief N-bit Full Adder operation.
+     *  @details SUM = A ⊕ B ⊕ C-IN; C-OUT = (A • B) | (C-IN • (A ⊕ B)).
+     *  Can be cascaded for multi-bit addition.
+     *  @code
+     *  // SUM = A ^ B ^ CIN
+     *  // COUT = (A & B) | (CIN & (A ^ B))
+     *  @endcode
+     */
+    ADDER   = 0x32, // 0b 0011 0010
+
+    // probability helpers
+    SAMPLE   = 0xF0, // 0b 1111 0000
+    TALLY    = 0xF1, // 0b 1111 0001
+}
+
+table KofNArgs {
+  atleast: uint32 = 0;
+}
+
+table MonteCarloExpectedValueOptions {
+  ci_low: float32  = 0.05;
+  ci_high: float32 = 0.95;
+}
+
+union OperatorArgs {
+    KofNArgs,
+    MonteCarloExpectedValueOptions,
+}
+
+// An operator takes tensors as inputs and output. The type of operation being
+// performed is determined by the OpCode
+table Op {
+  opcode: OpCode;
+  args: OperatorArgs;
+
+  // we allow making the input edges negated, this can save an additional OpCode.BITWISE_NOT operation since the
+  // inversion can be fused during the operation. This way, all Opcode ops, are actually fused invert_then_op.
+  //
+  // another alternative to this would have been to keep a list of inversion_masks: [bool]. But I see a few issues with
+  // this. first, I need to make sure the inversion_masks list size matches the inputs list size. second, a list of bool
+  // is ultimately a list of bytes, why waste 7 extra bits when you need just one? If you say, well, just bitpack it,
+  // then, I have to unpack it and make sure my list of bytes/ubytes is exactly size(inputs)/8. then finally, when I
+  // perform the actual op, I will have to apply this bit as a mask, which in the best case, will still be a ternary op
+  // meaning that, whether input should be inverted will not be decided until both the mask AND the input data are
+  // available to the CPU instruction pipeline.
+  inputs: [uint32];
+  inverted_inputs: [uint32];
+
+  output: uint32; // single output only
+  name: string;  // optional
+}
+
+table SubCircuit {
+  // A list of all tensors used in this model.
+  tensors: [Tensor];
+
+  // Indices of the input tensors.
+  inputs: [uint32];
+
+  // Indices of the output tensors.
+  outputs: [uint32];
+
+  // All operators, in execution order.
+  operators: [Op];
+
+  // Name of sub-circuit (used for debugging).
+  name: string;
+}
+
+// Table of raw data buffers (used for constant tensors). Referenced by tensors
+// by index. The generous alignment accommodates mmap-friendly data structures.
+table Buffer {
+  data: [ubyte]; //(force_align: 16); //16 * sizeof(byte) = 128 bits
+}
+
+table Circuit {
+  // All the subgraphs/subcircuits of the model. The 0th is assumed to be the main
+  // model.
+  subciruits: [SubCircuit];
+
+  // Buffers of the model.
+  // NOTE: It is required that the first entry in here is always an empty
+  // buffer. This is so that the default buffer index of zero in Tensor
+  // will always refer to a valid empty buffer.
+  buffers: [Buffer];
+
+  // optional name and description of the model.
+  name: string;
+  description: string;
+}
+
+root_type Circuit;
