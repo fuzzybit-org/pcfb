@@ -73,7 +73,8 @@ struct Error {
          * This error occurs when file operations (read, write, open) fail due to
          * filesystem issues, permissions, or other I/O-related problems.
          * 
-         * @example File not found, permission denied, disk full
+         * @par Examples:
+         * File not found, permission denied, disk full
          */
         IoError,
         
@@ -84,7 +85,8 @@ struct Error {
          * corrupted, invalid, or malformed buffer data. This is a critical
          * security and data integrity check.
          * 
-         * @example Corrupted .pcfb file, truncated buffer, invalid schema
+         * @par Examples:
+         * Corrupted .pcfb file, truncated buffer, invalid schema
          */
         VerificationFailed,
         
@@ -94,7 +96,8 @@ struct Error {
          * This error occurs when a buffer is null, empty when expected to contain data,
          * or otherwise in an invalid state for the requested operation.
          * 
-         * @example Empty buffer passed to parser, null pointer dereference
+         * @par Examples:
+         * Empty buffer passed to parser, null pointer dereference
          */
         InvalidBuffer,
         
@@ -104,7 +107,8 @@ struct Error {
          * This error occurs when the system cannot retrieve file metadata
          * (size, permissions, etc.) required for memory mapping operations.
          * 
-         * @example File doesn't exist, insufficient permissions
+         * @par Examples:
+         * File doesn't exist, insufficient permissions
          */
         StatFailed,
         
@@ -114,7 +118,8 @@ struct Error {
          * This error occurs when mmap() fails to create a memory mapping of a file,
          * typically due to system resource constraints or file system limitations.
          * 
-         * @example Out of virtual memory, file too large, unsupported file system
+         * @par Examples:
+         * Out of virtual memory, file too large, unsupported file system
          */
         MapFailed,
         
