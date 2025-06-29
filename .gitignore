@@ -41,5 +41,6 @@
 *.dwo
 .idea
 cmake-build-*
+build
 
 .DS_Store

@@ -18,10 +18,28 @@ add_custom_command(
         VERBATIM
 )
 
+# Define the schema binary output file
+set(SCHEMA_BINARY ${CMAKE_CURRENT_SOURCE_DIR}/../schema/pcfb_v1.bfbs)
+
+# Add custom command to generate binary schema from FlatBuffer schema
+add_custom_command(
+        OUTPUT ${SCHEMA_BINARY}
+        COMMAND flatc -b --schema -o "${CMAKE_CURRENT_SOURCE_DIR}/../schema/" ${FBS_FILE}
+        DEPENDS ${FBS_FILE} flatc
+        COMMENT "Generating PCFB binary schema from FlatBuffer schema"
+        VERBATIM
+)
+
 # Create a target that depends on the generated files
 add_custom_target(pcfb_cpp_headers
         DEPENDS ${GENERATED_HEADER}
         COMMENT "Generate PCFB C++ FlatBuffer headers"
+)
+
+# Create a target that generates the binary schema
+add_custom_target(pcfb_schema
+        DEPENDS ${SCHEMA_BINARY}
+        COMMENT "Generate PCFB binary schema"
 )
 
 # -----------------------------------------------------------------------------
