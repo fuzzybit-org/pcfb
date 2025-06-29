@@ -1,31 +1,41 @@
-FetchContent_Declare(
-        flatbuffers
-        GIT_REPOSITORY https://github.com/google/flatbuffers.git
-        GIT_TAG v25.2.10 # Use a specific stable tag or branch
-)
-FetchContent_MakeAvailable(flatbuffers)
+cmake_minimum_required (VERSION 3.24)
 
-# Define the input and output files
-set(FBS_FILE ${CMAKE_CURRENT_SOURCE_DIR}/schema/pcfb_v1.fbs)
-set(GENERATED_HEADER ${CMAKE_CURRENT_SOURCE_DIR}/include/pcfb.h)
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS ON)
 
-# Add custom command to generate C++ files from FlatBuffer schema
-add_custom_command(
-        OUTPUT ${GENERATED_HEADER}
-        COMMAND flatc --cpp --scoped-enums --gen-mutable --gen-object-api -o ${CMAKE_CURRENT_SOURCE_DIR} ${FBS_FILE}
-        DEPENDS ${FBS_FILE} flatc
-        COMMENT "Generating PCFB C++ headers from FlatBuffer schema"
-        VERBATIM
-)
+project("pcfb" LANGUAGES C CXX)
+include(CheckIncludeFileCXX)
+option(BUILD_TESTS "Build tests" ON)  # Influences CTest.
 
-# Create a target that depends on the generated files
-add_custom_target(pcfb_cpp_headers
-        DEPENDS ${GENERATED_HEADER}
-        COMMENT "Generate PCFB C++ FlatBuffer headers"
-)
+Include(FetchContent)
+add_subdirectory(src)
+if (BUILD_TESTS)
+    include(CTest)
+    enable_testing()
+    add_subdirectory(tests)
+endif ()
 
-# Add the generated header to the pcfb library if you plan to create one
-# Uncomment and modify as needed:
-add_library(pcfb ${GENERATED_HEADER})
-target_include_directories(pcfb PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(pcfb PUBLIC flatbuffers)
+#
+# install
+#
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
+set(PCFB_BUILD_NUMBER        ${BUILD_NUMBER})
+set(PCFB_BUILD_COMMIT        ${BUILD_COMMIT})
+set(PCFB_INSTALL_VERSION 0.0.${BUILD_NUMBER})
+
+set(PCFB_INCLUDE_INSTALL_DIR ${CMAKE_INSTALL_INCLUDEDIR} CACHE PATH "Location of header  files")
+set(PCFB_LIB_INSTALL_DIR     ${CMAKE_INSTALL_LIBDIR}     CACHE PATH "Location of library files")
+set(PCFB_BIN_INSTALL_DIR     ${CMAKE_INSTALL_BINDIR}     CACHE PATH "Location of binary  files")
+
+set(PCFB_PUBLIC_HEADERS
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/pcfb.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/pcfb_flatbuffer.h)
+
+set_target_properties(pcfb
+        PROPERTIES
+        PUBLIC_HEADER "${PCFB_PUBLIC_HEADERS}")
+
+install(TARGETS pcfb LIBRARY PUBLIC_HEADER)

@@ -6,7 +6,7 @@ flatbuffers:
   is:
     - a memory efficient SerDe Library
     - https://github.com/google/flatbuffers
-  language_framework: C/C++
+  language_framework: C/C++, CMake
   license: Apache v2.0
   provides:
     - [C++_API_PUBLIC] SerDe API in the `::flatbuffers` namespace

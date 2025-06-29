@@ -108,7 +108,7 @@ table MonteCarloExpectedValueOptions {
   ci_high: float32 = 0.95;
 }
 
-union OperatorArgs {
+union OpArgs {
     KofNArgs,
     MonteCarloExpectedValueOptions,
 }
@@ -117,7 +117,7 @@ union OperatorArgs {
 // performed is determined by the OpCode
 table Op {
   opcode: OpCode;
-  args: OperatorArgs;
+  args: OpArgs;
 
   // we allow making the input edges negated, this can save an additional OpCode.BITWISE_NOT operation since the
   // inversion can be fused during the operation. This way, all Opcode ops, are actually fused invert_then_op.
