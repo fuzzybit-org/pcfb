@@ -1,6 +1,124 @@
 # pcfb
 a library for representing probabilistic circuits as tensors. single source of truth for the probabilistic circuit flatbuffer PCFB schema
 
+## Schema Layout
+```mermaid
+erDiagram
+    Circuit ||--o{ SubCircuit : "subciruits[]"
+    Circuit ||--o{ Buffer : "buffers[]"
+    
+    SubCircuit ||--o{ Tensor : "tensors[]"
+    SubCircuit ||--o{ Op : "operators[]"
+    SubCircuit }o--|| Tensor : "inputs[] indices"
+    SubCircuit }o--|| Tensor : "outputs[] indices"
+    
+    Op ||--|| OpCode : "opcode"
+    Op ||--o| OpArgs : "args"
+    Op }o--|| Tensor : "inputs[] indices"
+    Op }o--|| Tensor : "inverted_inputs[] indices"
+    Op }o--|| Tensor : "output index"
+    
+    Tensor ||--|| TensorType : "type"
+    Tensor }o--|| Buffer : "buffer_idx"
+    
+    OpArgs ||--o| KofNArgs : "union member"
+    OpArgs ||--o| MonteCarloExpectedValueOptions : "union member"
+    
+    Circuit {
+        SubCircuit_array subciruits
+        Buffer_array buffers
+        string name
+        string description
+    }
+    
+    SubCircuit {
+        Tensor_array tensors
+        uint32_array inputs
+        uint32_array outputs
+        Op_array operators
+        string name
+    }
+    
+    Op {
+        OpCode opcode
+        OpArgs args
+        uint32_array inputs
+        uint32_array inverted_inputs
+        uint32 output
+        string name
+    }
+    
+    Tensor {
+        uint32_array shape
+        TensorType type
+        uint32 buffer_idx
+        string name
+    }
+    
+    Buffer {
+        ubyte_array data
+    }
+    
+    OpArgs {
+        union_of KofNArgs_or_MonteCarloExpectedValueOptions
+    }
+    
+    KofNArgs {
+        uint32 atleast
+    }
+    
+    MonteCarloExpectedValueOptions {
+        float32 ci_low
+        float32 ci_high
+    }
+    
+    OpCode {
+        ubyte BITWISE_NO_OP
+        ubyte BITWISE_AND
+        ubyte BITWISE_OR
+        ubyte BITWISE_XOR
+        ubyte BITWISE_NOT
+        ubyte BITWISE_NAND
+        ubyte BITWISE_NOR
+        ubyte BITWISE_XNOR
+        ubyte BITWISE_ATLEAST
+        ubyte BITWISE_ATMOST
+        ubyte BITWISE_EXACTLY
+        ubyte BITWISE_ZEROS
+        ubyte BITWISE_ONES
+        ubyte BITWISE_EVENS
+        ubyte BITWISE_ODDS
+        ubyte BITWISE_CONV_ND
+        ubyte BITWISE_CONV_1D
+        ubyte BITWISE_CONV_2D
+        ubyte BITWISE_FFT_ND
+        ubyte BITWISE_FFT_1D
+        ubyte BITWISE_FFT_2D
+        ubyte BITWISE_MUXED
+        ubyte BITWISE_DEMUX
+        ubyte ADDER
+        ubyte COMPARATOR
+        ubyte SAMPLE
+        ubyte TALLY
+    }
+    
+    TensorType {
+        ubyte UINT4
+        ubyte UINT8
+        ubyte UINT16
+        ubyte UINT32
+        ubyte UINT64
+        ubyte FLOAT16
+        ubyte FLOAT32
+        ubyte FLOAT64
+    }
+```
+## Build
+```shell
+mkdir build && cd build
+cmake -DPCFB_BUILD_TESTS=ON .. && cmake --build . && ctest
+```
+
 ```
 flatbuffers:
   is:
@@ -32,7 +150,3 @@ pcfb:
   outputs: [`.pcfb` files, `::pcfb:ir`]
 ```
 
-```shell
-mkdir build && cd build
-cmake -DPCFB_BUILD_TESTS=ON .. && cmake --build . && ctest
-```
