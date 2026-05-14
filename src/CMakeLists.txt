@@ -5,26 +5,28 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(flatbuffers)
 
-# Define the input and output files
+# Define the input and output files (outputs must live under the build tree;
+# CMake rejects add_custom_command OUTPUT paths inside the source directory).
 set(FBS_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../schema/pcfb_v1.fbs)
-set(GENERATED_HEADER ${CMAKE_CURRENT_SOURCE_DIR}/../include/pcfb_v1_generated.h)
+set(PCFB_GEN_ROOT "${CMAKE_CURRENT_BINARY_DIR}/generated")
+set(GENERATED_HEADER "${PCFB_GEN_ROOT}/include/pcfb_v1_generated.h")
+set(SCHEMA_BINARY "${PCFB_GEN_ROOT}/schema/pcfb_v1.bfbs")
 
 # Add custom command to generate C++ files from FlatBuffer schema
 add_custom_command(
         OUTPUT ${GENERATED_HEADER}
-        COMMAND flatc --cpp --scoped-enums --gen-mutable --gen-object-api -o "${CMAKE_CURRENT_SOURCE_DIR}/../include/" ${FBS_FILE}
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${PCFB_GEN_ROOT}/include"
+        COMMAND flatc --cpp --scoped-enums --gen-mutable --gen-object-api -o "${PCFB_GEN_ROOT}/include/" ${FBS_FILE}
         DEPENDS ${FBS_FILE} flatc
         COMMENT "Generating PCFB C++ headers from FlatBuffer schema"
         VERBATIM
 )
 
-# Define the schema binary output file
-set(SCHEMA_BINARY ${CMAKE_CURRENT_SOURCE_DIR}/../schema/pcfb_v1.bfbs)
-
 # Add custom command to generate binary schema from FlatBuffer schema
 add_custom_command(
         OUTPUT ${SCHEMA_BINARY}
-        COMMAND flatc -b --schema -o "${CMAKE_CURRENT_SOURCE_DIR}/../schema/" ${FBS_FILE}
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${PCFB_GEN_ROOT}/schema"
+        COMMAND flatc -b --schema -o "${PCFB_GEN_ROOT}/schema/" ${FBS_FILE}
         DEPENDS ${FBS_FILE} flatc
         COMMENT "Generating PCFB binary schema from FlatBuffer schema"
         VERBATIM
@@ -50,15 +52,22 @@ set(PCFB_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/io.cpp
 )
 
-add_library(pcfb STATIC ${PCFB_SRC})
+add_library(pcfb STATIC ${PCFB_SRC} ${GENERATED_HEADER})
+set_source_files_properties(${GENERATED_HEADER} PROPERTIES GENERATED TRUE)
 
 # Generated headers must be available before compilation
 add_dependencies(pcfb pcfb_cpp_headers)
 
 target_include_directories(pcfb
     PUBLIC
+        # Generated header must precede source include/ so we do not pick a stale
+        # checked-in copy when present.
+        $<BUILD_INTERFACE:${PCFB_GEN_ROOT}/include>
         $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
 target_link_libraries(pcfb PUBLIC flatbuffers)
+
+set(PCFB_GENERATED_HEADER "${GENERATED_HEADER}" PARENT_SCOPE)
+set(PCFB_GENERATED_SCHEMA "${SCHEMA_BINARY}" PARENT_SCOPE)
