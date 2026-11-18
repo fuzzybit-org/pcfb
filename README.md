@@ -1,4 +1,9 @@
 # pcfb
+
+> **Status:** partial — verified 2026-11-18 (`flatc --conform` v1 → v1.1 with flatc 25.2.10).
+> **Fate:** stays — the portable `.pcfb` artifact format (MIT).
+> **What works today:** FlatBuffers schema v1 and a header-only mmap reader; v1.1 spec merged (docs/SPEC-v1.1.md); builder/validator in progress (pcfb#4).
+
 a library for representing probabilistic circuits as tensors. single source of truth for the probabilistic circuit flatbuffer PCFB schema
 
 ## Build
