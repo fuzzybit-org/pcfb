@@ -1,7 +1,8 @@
-# PCFB v1.1 — Probabilistic Circuit FlatBuffer (draft)
+# PCFB v1.1 — Probabilistic Circuit FlatBuffer
 
-Status: **draft for review**. Normative draft schema: [`schema/drafts/pcfb_v1_1.fbs`](../schema/drafts/pcfb_v1_1.fbs).
-Supersedes the informal conventions of `schema/pcfb_v1.fbs` (identifier `PCF1`, unreleased).
+Status: **v1.1**. Canonical schema: [`schema/pcfb.fbs`](../schema/pcfb.fbs)
+(v1 frozen at [`schema/history/pcfb_v1.fbs`](../schema/history/pcfb_v1.fbs); `flatc --conform` must pass).
+Supersedes the informal conventions of v1 (identifier `PCF1`, unreleased).
 
 ## 1. Purpose and position
 
@@ -156,9 +157,11 @@ A conforming reader MUST verify (FlatBuffers verifier) and SHOULD validate:
 
 ## 10. Conformance fixtures
 
-`tests/fixtures/`: (1) `and2.pcfb` — AND of p=0.5 and p=0.25, query 0.125; (2) `kofn.pcfb` — ATLEAST(2 of 3);
-(3) `inverted.pcfb` — NOR with an inverted input; (4) `chinese.pcfb` — compiled from Aralia `chinese.xml`
-(exact P = 1.1705818e-3); (5) negative fixtures for each rule in §8.
+`tests/fixtures/`: (1) `and2.pcfb` — AND of p=0.5 and p=0.25, query 0.125; (2) `kofn.pcfb` — ATLEAST(2 of 3)
+independent p=0.5 events, query 0.5; (3) `inverted.pcfb` — NOR(A, ¬B) with A=0.5, B=0.25, query 0.125;
+(4) `chinese.pcfb` — compiled from Aralia `chinese.xml` (exact P = 1.1705818e-3), **deferred** until
+`fuzzybit-org/fuzzybits#43` (the compiler) exists; (5) negative cases for each rule in §8 live in
+`tests/test_validate.cpp` (built with the object API, not committed as `.pcfb` files).
 
 ## 11. Changes from v1 (summary)
 

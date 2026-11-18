@@ -45,7 +45,7 @@
 #include <fstream>
 #include <cstddef>
 
-#include "pcfb_v1_generated.h"
+#include "pcfb_generated.h"
 
 namespace pcfb::io {
 

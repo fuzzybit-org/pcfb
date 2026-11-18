@@ -1,0 +1,77 @@
+/**
+ * @file builder.h
+ * @brief In-memory construction of conforming PCFB v1.1 (`core-1.1`) files.
+ */
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "pcfb/error.h"
+#include "pcfb_generated.h"
+
+namespace pcfb {
+
+/// Incremental writer for a single core-1.1 subcircuit.
+///
+/// Tensor ids are assigned in SSA order: each `add_sample` / `add_op` appends
+/// one tensor that is the unique output of that operator. Inputs must refer to
+/// already-created tensors, which is exactly spec §3.2 (topological order +
+/// single assignment). `finish()` writes required metadata, `schema_version =
+/// 0x00010001`, and an empty `buffers[0]`.
+class builder {
+public:
+    using tensor_id = std::uint32_t;
+
+    builder();
+    builder(const builder &) = delete;
+    builder &operator=(const builder &) = delete;
+    builder(builder &&) noexcept;
+    builder &operator=(builder &&) noexcept;
+    ~builder();
+
+    builder &name(std::string_view circuit_name);
+    builder &description(std::string_view circuit_description);
+
+    /// SAMPLE from a probability in `[0, 1]`. Threshold is
+    /// `probability_to_threshold(p)`; `always_true` is set iff `p == 1`.
+    Result<tensor_id> add_sample(double probability, std::string_view name, std::uint32_t event_id,
+                                 SampleSource source = SampleSource::BASIC_EVENT);
+
+    /// SAMPLE from an explicit 64-bit threshold. `probability` is stored as
+    /// `threshold / 2^64` (or 1 if `always_true`). Prefer the probability
+    /// overload: it is exact for every binary64.
+    Result<tensor_id> add_sample(std::uint64_t threshold, bool always_true, std::string_view name,
+                                 std::uint32_t event_id, SampleSource source = SampleSource::BASIC_EVENT);
+
+    /// Gate / constant. `args` is `KofNArgs.k` for ATLEAST / ATMOST / EXACTLY
+    /// and must be absent for every other core-1.1 opcode. SAMPLE is rejected
+    /// (use `add_sample`).
+    Result<tensor_id> add_op(OpCode opcode, std::span<const std::uint32_t> inputs,
+                             std::span<const std::uint32_t> inverted_inputs = {},
+                             std::optional<std::uint32_t> args = std::nullopt, std::string_view name = {});
+
+    Result<void> add_query(std::uint32_t target, QueryKind kind = QueryKind::PROBABILITY, std::string_view name = {},
+                           std::span<const double> confidence = {});
+
+    Result<void> set(std::string_view key, std::string_view value);
+    Result<void> set(std::string_view key, std::int64_t value);
+    Result<void> set(std::string_view key, double value);
+    Result<void> set(std::string_view key, std::span<const std::byte> value);
+
+    /// Serialise a conforming v1.1 buffer. Fails if there is no query, a
+    /// duplicate `event_id`, or a previous `add_*` error left the builder dirty.
+    Result<std::vector<std::byte>> finish();
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+} // namespace pcfb
