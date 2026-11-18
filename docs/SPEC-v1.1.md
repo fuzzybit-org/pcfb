@@ -161,7 +161,7 @@ A conforming reader MUST verify (FlatBuffers verifier) and SHOULD validate:
 independent p=0.5 events, query 0.5; (3) `inverted.pcfb` — NOR(A, ¬B) with A=0.5, B=0.25, query 0.125;
 (4) `chinese.pcfb` — compiled from Aralia `chinese.xml` (public in `fuzzybit-org/fuzzybits`
 `input/Aralia/chinese.xml`, 25 basic events) by `fzb compile` (`fuzzybit-org/fuzzybits#43`,
-generator commit `1d9f3bfa08d4ba62a509c3cba8c60c1795ba0be0`). Published digit string
+generator commit `ff8b7618609d7e7e4900f22d2834f75e35ed5650`). Published digit string
 1.1705818e-3; bit-sliced exhaustive eval yields 1.1705818107586689e-03. The pcfb test-only
 evaluator caps at 24 random SAMPLE events, so the fixture test asserts `validate` + structure
 (25 `SAMPLE`/`BASIC_EVENT`, 7 AND, 16 OR, query `r1`) rather than exact P; (5) negative cases
