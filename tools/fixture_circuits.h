@@ -10,9 +10,18 @@
 namespace pcfb::fixtures {
 
 /// AND of p=0.5 and p=0.25. Exact query probability: 0.125.
+inline void pin_fixture_metadata(builder &b) {
+    // Pin generator identity so committed .pcfb bytes do not change with
+    // `project(VERSION 0.0.${BUILD_NUMBER})`.
+    (void)b.set("general.generator", "pcfb-fixtures");
+    (void)b.set("general.generator_version", "1.1.0");
+}
+
+/// AND of p=0.5 and p=0.25. Exact query probability: 0.125.
 inline Result<std::vector<std::byte>> and2() {
     builder b;
     b.name("and2");
+    pin_fixture_metadata(b);
     auto a = b.add_sample(0.5, "A", 0);
     auto c = b.add_sample(0.25, "B", 1);
     if (!a || !c) {
@@ -33,6 +42,7 @@ inline Result<std::vector<std::byte>> and2() {
 inline Result<std::vector<std::byte>> kofn() {
     builder b;
     b.name("kofn");
+    pin_fixture_metadata(b);
     auto x = b.add_sample(0.5, "X", 0);
     auto y = b.add_sample(0.5, "Y", 1);
     auto z = b.add_sample(0.5, "Z", 2);
@@ -54,6 +64,7 @@ inline Result<std::vector<std::byte>> kofn() {
 inline Result<std::vector<std::byte>> inverted() {
     builder b;
     b.name("inverted");
+    pin_fixture_metadata(b);
     auto a = b.add_sample(0.5, "A", 0);
     auto c = b.add_sample(0.25, "B", 1);
     if (!a || !c) {
