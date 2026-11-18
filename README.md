@@ -4,119 +4,98 @@ a library for representing probabilistic circuits as tensors. single source of t
 ## Build
 ```shell
 mkdir build && cd build
-cmake -DPCFB_BUILD_TESTS=ON .. && cmake --build . && ctest
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+ctest --test-dir build --output-on-failure
+# aliases: -DBUILD_TESTING=OFF, -DBUILD_TESTS=OFF, -DPCFB_BUILD_TESTS=OFF
 ```
+
+Headers are generated at build time with `flatc` from FlatBuffers v25.2.10 (FetchContent). The canonical schema is `schema/pcfb.fbs` (v1.1); v1 is frozen at `schema/history/pcfb_v1.fbs` and checked with `flatc --conform`.
+
+## Builder / reader example
+
+```cpp
+#include "pcfb.h"
+
+#include <array>
+#include <cstdint>
+#include <iostream>
+
+int main() {
+    pcfb::builder b;
+    auto a = b.add_sample(0.5, "A", /*event_id=*/0);
+    auto c = b.add_sample(0.25, "B", 1);
+    const std::array<std::uint32_t, 2> ins{*a, *c};
+    auto z = b.add_op(pcfb::OpCode::BITWISE_AND, ins);
+    b.add_query(*z, pcfb::QueryKind::PROBABILITY, "top");
+    auto bytes = b.finish(); // required metadata + schema_version 0x00010001
+
+    auto circuit = pcfb::io::from_bytes(*bytes);
+    for (const auto &d : pcfb::validate(*circuit)) {
+        std::cerr << d.location << ": " << d.message << "\n";
+    }
+    std::cout << "pcfb " << pcfb::version() << " subcircuits="
+              << circuit->subcircuits()->size() << "\n";
+}
+```
+
+`add_sample` also accepts an explicit `(threshold, always_true, name, event_id, source)` overload. Thresholds are `min(floor(p·2^64), 2^64−1)` (see `pcfb::probability_to_threshold`).
 
 ## Schema Layout
 ```mermaid
 erDiagram
-    Circuit ||--o{ SubCircuit : "subciruits[]"
+    Circuit ||--o{ SubCircuit : "subcircuits[]"
     Circuit ||--o{ Buffer : "buffers[]"
-    
+    Circuit ||--o{ KeyValue : "metadata[]"
+
     SubCircuit ||--o{ Tensor : "tensors[]"
     SubCircuit ||--o{ Op : "operators[]"
+    SubCircuit ||--o{ Query : "queries[]"
     SubCircuit }o--|| Tensor : "inputs[] indices"
     SubCircuit }o--|| Tensor : "outputs[] indices"
-    
+
     Op ||--|| OpCode : "opcode"
     Op ||--o| OpArgs : "args"
     Op }o--|| Tensor : "inputs[] indices"
     Op }o--|| Tensor : "inverted_inputs[] indices"
     Op }o--|| Tensor : "output index"
-    
+
     Tensor ||--|| TensorType : "type"
     Tensor }o--|| Buffer : "buffer_idx"
-    
+
     OpArgs ||--o| KofNArgs : "union member"
+    OpArgs ||--o| SampleArgs : "union member"
     OpArgs ||--o| MonteCarloExpectedValueOptions : "union member"
-    
+
     Circuit {
-        SubCircuit_array subciruits
+        SubCircuit_array subcircuits
         Buffer_array buffers
         string name
         string description
+        uint32 schema_version
+        KeyValue_array metadata
     }
-    
+
     SubCircuit {
         Tensor_array tensors
         uint32_array inputs
         uint32_array outputs
         Op_array operators
         string name
+        Query_array queries
     }
-    
-    Op {
-        OpCode opcode
-        OpArgs args
-        uint32_array inputs
-        uint32_array inverted_inputs
-        uint32 output
+
+    SampleArgs {
+        float64 probability
+        uint64 threshold
+        bool always_true
+        uint32 event_id
+        SampleSource source
         string name
     }
-    
-    Tensor {
-        uint32_array shape
-        TensorType type
-        uint32 buffer_idx
-        string name
-    }
-    
-    Buffer {
-        ubyte_array data
-    }
-    
-    OpArgs {
-        union_of KofNArgs_or_MonteCarloExpectedValueOptions
-    }
-    
+
     KofNArgs {
-        uint32 atleast
-    }
-    
-    MonteCarloExpectedValueOptions {
-        float32 ci_low
-        float32 ci_high
-    }
-    
-    OpCode {
-        ubyte BITWISE_NO_OP
-        ubyte BITWISE_AND
-        ubyte BITWISE_OR
-        ubyte BITWISE_XOR
-        ubyte BITWISE_NOT
-        ubyte BITWISE_NAND
-        ubyte BITWISE_NOR
-        ubyte BITWISE_XNOR
-        ubyte BITWISE_ATLEAST
-        ubyte BITWISE_ATMOST
-        ubyte BITWISE_EXACTLY
-        ubyte BITWISE_ZEROS
-        ubyte BITWISE_ONES
-        ubyte BITWISE_EVENS
-        ubyte BITWISE_ODDS
-        ubyte BITWISE_CONV_ND
-        ubyte BITWISE_CONV_1D
-        ubyte BITWISE_CONV_2D
-        ubyte BITWISE_FFT_ND
-        ubyte BITWISE_FFT_1D
-        ubyte BITWISE_FFT_2D
-        ubyte BITWISE_MUXED
-        ubyte BITWISE_DEMUX
-        ubyte ADDER
-        ubyte COMPARATOR
-        ubyte SAMPLE
-        ubyte TALLY
-    }
-    
-    TensorType {
-        ubyte UINT4
-        ubyte UINT8
-        ubyte UINT16
-        ubyte UINT32
-        ubyte UINT64
-        ubyte FLOAT16
-        ubyte FLOAT32
-        ubyte FLOAT64
+        uint32 k
     }
 ```
 
@@ -139,15 +118,11 @@ pcfb:
   language_framework: C/C++
   license: MIT
   provides:
-    - [FILE] probabilistic circuit flatbuffer PCFB schema, defined in `pcfb_v1.fbs`, for the PCFB-file format (`.pcfb`).
-    - [FILE] an autogenerated flatbuffer C/C++ header file `pcfb_generated.h`, which has helper I/O ops that use the `::flatbuffers` API
-    - [C++_API_PUBLIC] a small, high-level, functional C/C++ API/interface in the namespace `::pcfb`, including:
-      - a thin wrapper over the classes in `pcfb_generated.h`, providing an intermediate representaion called `::pcfb:ir`
-      - a namespace called `::pcfb::io`, for end-to-end SerDe ops on `::pcfb:ir` <-> PCFB (`.pcfb`) files
-  implements:
-    - internal functions to perform SerDe ops on `::pcfb:ir` <-> PCFB (`.pcfb`) files, implementing the methods defined in C/C++ API/interface in `::pcfb`.
+    - [FILE] canonical PCFB v1.1 schema `schema/pcfb.fbs` (identifier `PCF1`)
+    - [FILE] autogenerated `pcfb_generated.h` (build-time `flatc`, FlatBuffers v25.2.10)
+    - [C++_API_PUBLIC] `::pcfb` — `io::{read,from_bytes,write,to_bytes}`, `builder`, `validate`, `ir::Circuit`
   uses: flatbuffers
-  inputs: [`.pcfb` files, `::pcfb:ir`]
-  outputs: [`.pcfb` files, `::pcfb:ir`]
+  inputs: [`.pcfb` files, `::pcfb::ir`]
+  outputs: [`.pcfb` files, `::pcfb::ir`]
 ```
 

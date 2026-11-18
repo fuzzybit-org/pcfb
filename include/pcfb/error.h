@@ -122,7 +122,12 @@ struct Error {
          * Out of virtual memory, file too large, unsupported file system
          */
         MapFailed,
-        
+
+        /**
+         * @brief Builder rejected the request (arity, SSA, range, metadata, …).
+         */
+        BuilderError,
+
         /**
          * @brief Unknown or unspecified error.
          * 

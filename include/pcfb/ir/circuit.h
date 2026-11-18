@@ -41,10 +41,11 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <span>
 
-#include "pcfb_v1_generated.h"
+#include "pcfb_generated.h"
 
 #include "pcfb/error.h"
 
@@ -266,6 +267,13 @@ public:
      * ```
      */
     [[nodiscard]] const std::byte *data() const noexcept { return base_; }
+
+    /// v1.1 field (v1 typo `subciruits` kept the same slot). Null if invalid.
+    [[nodiscard]] const flatbuffers::Vector<flatbuffers::Offset<pcfb::SubCircuit>> *subcircuits() const noexcept {
+        return root_ ? root_->subcircuits() : nullptr;
+    }
+
+    [[nodiscard]] std::uint32_t schema_version() const noexcept { return root_ ? root_->schema_version() : 0; }
 
 private:
     // Allow IO helpers to attach lifetime owners.

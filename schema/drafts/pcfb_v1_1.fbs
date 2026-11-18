@@ -1,5 +1,5 @@
-// PCFB v1.1 DRAFT — see docs/SPEC-v1.1.md
-// Wire-compatible with v1 (schema/pcfb_v1.fbs): renames keep field positions; everything new is appended.
+// PCFB v1.1 — copy of the canonical schema at schema/pcfb.fbs (kept so existing links resolve).
+// Wire-compatible with v1 (schema/history/pcfb_v1.fbs): renames keep field positions; everything new is appended.
 namespace pcfb;
 
 file_identifier "PCF1"; // major version 1; minor version lives in Circuit.schema_version
