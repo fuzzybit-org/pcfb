@@ -1,12 +1,12 @@
-function(CHECK_COMPILER_FLAG_SUPPORT FLAG SUPPORT_VAR FLAGS_VAR)
-    include(CheckCXXCompilerFlag)
-    CHECK_CXX_COMPILER_FLAG(${FLAG} ${SUPPORT_VAR})
-    if (${SUPPORT_VAR})
-        set(${FLAGS_VAR} "${${FLAGS_VAR}};${FLAG}" PARENT_SCOPE)
-    endif ()
-endfunction()
+# -march=native binds pcfb (and everything configured below this directory,
+# e.g. FetchContent flatbuffers) to the build host's ISA; binaries built on a
+# newer CPU then SIGILL on older ones. Keep it opt-in for local benchmarking.
+option(PCFB_OPTIMIZE_FOR_NATIVE "Compile pcfb with -march=native (non-portable)" OFF)
 
-set(NON_PORTABLE_CXX_FLAGS)
-mark_as_advanced(NON_PORTABLE_CXX_FLAGS)
-CHECK_COMPILER_FLAG_SUPPORT("-march=native" COMPILER_SUPPORTS_MARCH_NATIVE NON_PORTABLE_CXX_FLAGS)
-add_compile_options(${NON_PORTABLE_CXX_FLAGS})
+if(PCFB_OPTIMIZE_FOR_NATIVE)
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag("-march=native" COMPILER_SUPPORTS_MARCH_NATIVE)
+    if(COMPILER_SUPPORTS_MARCH_NATIVE)
+        add_compile_options(-march=native)
+    endif()
+endif()
