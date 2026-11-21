@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <optional>
 
 TEST_CASE("builder computes thresholds and always_true", "[builder]") {
     pcfb::builder b;
@@ -121,4 +122,27 @@ TEST_CASE("k-of-n k > n is rejected", "[builder]") {
     REQUIRE(a);
     auto op = b.add_op(pcfb::OpCode::BITWISE_ATLEAST, std::array<std::uint32_t, 1>{*a}, {}, 2u);
     REQUIRE_FALSE(op);
+}
+
+TEST_CASE("builder names tensors from their ops on large circuits", "[builder]") {
+    constexpr std::uint32_t n = 200000;
+    pcfb::builder b;
+    REQUIRE(b.add_sample(0.5, "x", 1));
+    std::uint32_t prev = 0;
+    for (std::uint32_t i = 1; i < n; ++i) {
+        const std::array<std::uint32_t, 1> in{prev};
+        auto t = b.add_op(pcfb::OpCode::BITWISE_NOT, in, {}, std::nullopt, i % 2 == 0 ? "even" : "");
+        REQUIRE(t);
+        prev = *t;
+    }
+    REQUIRE(b.add_query(prev));
+    auto bytes = b.finish();
+    REQUIRE(bytes);
+    auto circuit = pcfb::io::from_bytes(*bytes);
+    REQUIRE(circuit);
+    const auto *tensors = circuit->subcircuits()->Get(0)->tensors();
+    REQUIRE(tensors->size() == n);
+    REQUIRE(tensors->Get(0)->name()->str() == "x");
+    REQUIRE(tensors->Get(2)->name()->str() == "even");
+    REQUIRE(tensors->Get(3)->name() == nullptr);
 }

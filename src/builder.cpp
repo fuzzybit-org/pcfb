@@ -316,18 +316,17 @@ Result<std::vector<std::byte>> builder::finish() {
 
     flatbuffers::FlatBufferBuilder fbb;
 
+    std::vector<const std::string *> tensor_names(st.next_tensor, nullptr);
+    for (const auto &op : st.ops) {
+        if (op.output < st.next_tensor && !op.name.empty() && tensor_names[op.output] == nullptr) {
+            tensor_names[op.output] = &op.name;
+        }
+    }
     std::vector<flatbuffers::Offset<Tensor>> tensors;
     tensors.reserve(st.next_tensor);
     for (std::uint32_t i = 0; i < st.next_tensor; ++i) {
-        std::string tensor_name;
-        for (const auto &op : st.ops) {
-            if (op.output == i && !op.name.empty()) {
-                tensor_name = op.name;
-                break;
-            }
-        }
         tensors.push_back(CreateTensorDirect(fbb, nullptr, TensorType::BIT, 0,
-                                             tensor_name.empty() ? nullptr : tensor_name.c_str()));
+                                             tensor_names[i] == nullptr ? nullptr : tensor_names[i]->c_str()));
     }
 
     std::vector<flatbuffers::Offset<Op>> operators;
