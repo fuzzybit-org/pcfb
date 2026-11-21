@@ -1,4 +1,4 @@
-// PCFB v1.1 — copy of the canonical schema at schema/pcfb.fbs (kept so existing links resolve).
+// PCFB v1.1 — draft copy kept so existing links resolve; frozen v1.1 is schema/history/pcfb_v1_1.fbs.
 // Wire-compatible with v1 (schema/history/pcfb_v1.fbs): renames keep field positions; everything new is appended.
 namespace pcfb;
 

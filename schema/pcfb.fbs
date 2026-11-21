@@ -1,5 +1,6 @@
-// PCFB v1.1 — canonical schema (see docs/SPEC-v1.1.md).
-// Wire-compatible with v1 (schema/history/pcfb_v1.fbs): renames keep field positions; everything new is appended.
+// PCFB v1.2 — canonical schema (see docs/SPEC-v1.2.md).
+// Wire-compatible with v1 and v1.1 (schema/history/pcfb_v1.fbs, schema/history/pcfb_v1_1.fbs): renames keep field
+// positions; everything new is appended.
 namespace pcfb;
 
 file_identifier "PCF1"; // major version 1; minor version lives in Circuit.schema_version
@@ -99,12 +100,13 @@ table Op {
 }
 
 enum QueryKind : ubyte {
-  PROBABILITY = 0,
+  PROBABILITY = 0,               // v1.1: P(target)
+  MONOTONE_HULL_PROBABILITY = 1, // v1.2: P(some subset of the true SAMPLE inputs satisfies target); needs minor >= 2
 }
 
 table Query {
   target: uint32;         // tensor index
-  kind: QueryKind = PROBABILITY;
+  kind: QueryKind = PROBABILITY; // runtimes reject files with kinds they do not implement (spec §8)
   name: string;
   confidence: [float64];  // optional requested confidence levels, e.g. [0.95, 0.99]
 }
@@ -144,7 +146,7 @@ table Circuit {
   buffers: [Buffer];         // buffers[0] must be empty
   name: string;
   description: string;
-  schema_version: uint32;    // v1.1: major << 16 | minor = 0x00010001
+  schema_version: uint32;    // major << 16 | minor: 0x00010001 (v1.1), 0x00010002 (v1.2 features used)
   metadata: [KeyValue];      // v1.1: sorted by key (binary-searchable)
 }
 

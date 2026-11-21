@@ -1,6 +1,7 @@
 # PCFB v1.1 — Probabilistic Circuit FlatBuffer
 
-Status: **v1.1**. Canonical schema: [`schema/pcfb.fbs`](../schema/pcfb.fbs)
+Status: **v1.1**, superseded by [v1.2](SPEC-v1.2.md); frozen schema [`schema/history/pcfb_v1_1.fbs`](../schema/history/pcfb_v1_1.fbs).
+Canonical schema: [`schema/pcfb.fbs`](../schema/pcfb.fbs)
 (v1 frozen at [`schema/history/pcfb_v1.fbs`](../schema/history/pcfb_v1.fbs); `flatc --conform` must pass).
 Supersedes the informal conventions of v1 (identifier `PCF1`, unreleased).
 

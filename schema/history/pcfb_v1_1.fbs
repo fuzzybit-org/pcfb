@@ -1,0 +1,151 @@
+// PCFB v1.1 — frozen (see docs/SPEC-v1.1.md). Do not edit: schema/pcfb.fbs must pass `flatc --conform` against this file.
+// Wire-compatible with v1 (schema/history/pcfb_v1.fbs): renames keep field positions; everything new is appended.
+namespace pcfb;
+
+file_identifier "PCF1"; // major version 1; minor version lives in Circuit.schema_version
+file_extension "pcfb";
+
+enum TensorType: ubyte {
+  UINT4  = 0x04,
+  UINT8  = 0x08,
+  UINT16 = 0x10,
+  UINT32 = 0x40,
+  UINT64 = 0x00, // default (v1 compatibility)
+
+  FLOAT16 = 0x90,
+  FLOAT32 = 0xA0,
+  FLOAT64 = 0xC0,
+
+  // v1.1: logical Boolean value per sample; runtimes choose the packing (bitpack width).
+  BIT = 0x01,
+}
+
+table Tensor {
+  shape: [uint32];   // core-1.1 node tensors: empty (rank 0)
+  type: TensorType;
+  buffer_idx: uint32; // 0 = no data (buffers[0] is always empty)
+  name: string;
+}
+
+enum OpCode : ubyte {
+  BITWISE_NO_OP   = 0x00,
+  BITWISE_AND     = 0x02,
+  BITWISE_OR      = 0x04,
+  BITWISE_XOR     = 0x06,
+  BITWISE_NOT     = 0x01,
+  BITWISE_NAND    = 0x03,
+  BITWISE_NOR     = 0x05,
+  BITWISE_XNOR    = 0x07,
+  BITWISE_ATLEAST = 0x08,
+  BITWISE_ATMOST  = 0x09,
+  BITWISE_EXACTLY = 0x0A,
+  BITWISE_ZEROS   = 0x10,
+  BITWISE_ONES    = 0x11,
+  // reserved in core-1.1 (not allowed in conforming files):
+  BITWISE_EVENS   = 0x1A,
+  BITWISE_ODDS    = 0x15,
+  BITWISE_CONV_ND = 0x20,
+  BITWISE_CONV_1D = 0x21,
+  BITWISE_CONV_2D = 0x22,
+  BITWISE_FFT_ND  = 0x40,
+  BITWISE_FFT_1D  = 0x41,
+  BITWISE_FFT_2D  = 0x42,
+  BITWISE_MUXED   = 0x30,
+  BITWISE_DEMUX   = 0x31,
+  COMPARATOR      = 0x34,
+  ADDER           = 0x32,
+  // probability helpers
+  SAMPLE          = 0xF0, // core-1.1: requires SampleArgs, no inputs
+  TALLY           = 0xF1, // reserved: superseded by SubCircuit.queries
+}
+
+table KofNArgs {
+  k: uint32 = 0; // v1 name: `atleast` (same position); used by ATLEAST / ATMOST / EXACTLY
+}
+
+table MonteCarloExpectedValueOptions { // v1 legacy (TALLY); kept for wire compatibility
+  ci_low: float32  = 0.05;
+  ci_high: float32 = 0.95;
+}
+
+enum SampleSource : ubyte {
+  BASIC_EVENT      = 0,
+  COLLAPSED_MODULE = 1, // independent subgraph replaced by its exact probability at compile time
+  HOUSE_EVENT      = 2,
+}
+
+table SampleArgs {
+  probability: float64;  // 0 <= p <= 1
+  threshold: uint64;     // min(floor(p * 2^64), 2^64 - 1) for p < 1; ignored if always_true
+  always_true: bool = false;
+  event_id: uint32;      // unique per subcircuit; PRNG stream identity
+  source: SampleSource = BASIC_EVENT;
+  name: string;          // original model identifier
+}
+
+union OpArgs {
+  KofNArgs,                        // 1 (v1)
+  MonteCarloExpectedValueOptions,  // 2 (v1)
+  SampleArgs,                      // 3 (v1.1)
+}
+
+table Op {
+  opcode: OpCode;
+  args: OpArgs;
+  inputs: [uint32];
+  inverted_inputs: [uint32]; // inversion fused into the op
+  output: uint32;            // single output only
+  name: string;
+}
+
+enum QueryKind : ubyte {
+  PROBABILITY = 0,
+}
+
+table Query {
+  target: uint32;         // tensor index
+  kind: QueryKind = PROBABILITY;
+  name: string;
+  confidence: [float64];  // optional requested confidence levels, e.g. [0.95, 0.99]
+}
+
+table SubCircuit {
+  tensors: [Tensor];
+  inputs: [uint32];
+  outputs: [uint32];
+  operators: [Op];   // topological order, single assignment
+  name: string;
+  queries: [Query];  // v1.1
+}
+
+table Buffer {
+  data: [ubyte] (force_align: 16);
+}
+
+table StringValue { value: string; }
+table IntValue    { value: int64; }
+table FloatValue  { value: float64; }
+table BytesValue  { value: [ubyte]; }
+
+union MetadataValue {
+  StringValue,
+  IntValue,
+  FloatValue,
+  BytesValue,
+}
+
+table KeyValue {
+  key: string (key); // lowercase, dot-separated, e.g. "general.generator"
+  value: MetadataValue;
+}
+
+table Circuit {
+  subcircuits: [SubCircuit]; // v1 name: `subciruits` (same position); core-1.1 uses exactly one
+  buffers: [Buffer];         // buffers[0] must be empty
+  name: string;
+  description: string;
+  schema_version: uint32;    // v1.1: major << 16 | minor = 0x00010001
+  metadata: [KeyValue];      // v1.1: sorted by key (binary-searchable)
+}
+
+root_type Circuit;

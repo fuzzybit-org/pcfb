@@ -2,6 +2,7 @@
 
 #include "pcfb/threshold.h"
 #include "pcfb/version.h"
+#include "schema_version.h"
 
 #include <algorithm>
 #include <cmath>
@@ -15,7 +16,6 @@
 namespace pcfb {
 namespace {
 
-constexpr std::uint32_t kSchemaVersion = 0x00010001u;
 constexpr const char *kOpset = "core-1.1";
 
 Error builder_error(std::string message) {
@@ -249,6 +249,9 @@ Result<void> builder::add_query(std::uint32_t target, QueryKind kind, std::strin
     if (target >= impl_->next_tensor) {
         return std::unexpected(builder_error("query target is not a defined tensor"));
     }
+    if (detail::query_kind_minor(kind) == 0) {
+        return std::unexpected(builder_error("unknown query kind " + std::to_string(static_cast<unsigned>(kind))));
+    }
     for (double c : confidence) {
         if (!(c > 0.0 && c < 1.0) || !std::isfinite(c)) {
             return std::unexpected(builder_error("query confidence levels must be in (0, 1)"));
@@ -350,10 +353,12 @@ Result<std::vector<std::byte>> builder::finish() {
     queries.reserve(st.queries.size());
     std::vector<std::uint32_t> outputs;
     outputs.reserve(st.queries.size());
+    std::uint32_t schema_minor = 1;
     for (const auto &q : st.queries) {
         queries.push_back(CreateQueryDirect(fbb, q.target, q.kind, q.name.empty() ? nullptr : q.name.c_str(),
                                             q.confidence.empty() ? nullptr : &q.confidence));
         outputs.push_back(q.target);
+        schema_minor = std::max(schema_minor, detail::query_kind_minor(q.kind));
     }
 
     auto sub = CreateSubCircuitDirect(fbb, &tensors, nullptr, &outputs, &operators,
@@ -392,7 +397,7 @@ Result<std::vector<std::byte>> builder::finish() {
     auto circuit = CreateCircuitDirect(fbb, &subcircuits, &buffers,
                                        st.circuit_name.empty() ? nullptr : st.circuit_name.c_str(),
                                        st.circuit_description.empty() ? nullptr : st.circuit_description.c_str(),
-                                       kSchemaVersion, &metadata);
+                                       detail::schema_version(schema_minor), &metadata);
     fbb.Finish(circuit, CircuitIdentifier());
 
     st.finished = true;
