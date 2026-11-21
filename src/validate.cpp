@@ -2,6 +2,7 @@
 
 #include "pcfb/threshold.h"
 #include "pcfb_generated.h"
+#include "schema_version.h"
 
 #include <cmath>
 #include <cstdint>
@@ -73,8 +74,8 @@ const char *string_meta(const Circuit *root, const char *key) {
     return (sv && sv->value()) ? sv->value()->c_str() : nullptr;
 }
 
-void validate_subcircuit(std::vector<Diagnostic> &out, const SubCircuit *sc, std::uint32_t si,
-                         std::uint32_t n_buffers) {
+void validate_subcircuit(std::vector<Diagnostic> &out, const SubCircuit *sc, std::uint32_t si, std::uint32_t n_buffers,
+                         std::uint32_t schema_minor) {
     const auto loc = path_sub(si);
     const std::uint32_t n_tensors = sc->tensors() ? sc->tensors()->size() : 0;
 
@@ -257,8 +258,21 @@ void validate_subcircuit(std::vector<Diagnostic> &out, const SubCircuit *sc, std
             if (!q) {
                 continue;
             }
-            check_index(out, q->target(), n_tensors, loc + ".queries[" + std::to_string(qi) + "].target",
-                        "query target");
+            const auto qloc = loc + ".queries[" + std::to_string(qi) + "]";
+            check_index(out, q->target(), n_tensors, qloc + ".target", "query target");
+            const auto kind = q->kind();
+            const auto needed = detail::query_kind_minor(kind);
+            if (needed == 0) {
+                out.push_back({Diagnostic::Code::UnknownQueryKind,
+                               "query kind " + std::to_string(static_cast<unsigned>(kind)) +
+                                   " is not defined in pcfb 1.2; a runtime must reject the file",
+                               qloc + ".kind"});
+            } else if (schema_minor < needed) {
+                out.push_back({Diagnostic::Code::SchemaVersionTooOld,
+                               std::string(EnumNameQueryKind(kind)) + " requires schema_version minor >= " +
+                                   std::to_string(needed) + ", file declares " + std::to_string(schema_minor),
+                               qloc + ".kind"});
+            }
         }
     }
 }
@@ -279,6 +293,7 @@ std::vector<Diagnostic> validate(const ir::Circuit &circuit) {
     const auto *root = circuit.get();
     std::uint32_t schema = root->schema_version();
     std::uint32_t major = schema == 0 ? 1u : (schema >> 16U);
+    std::uint32_t minor = schema & 0xFFFFU; // 0 for a v1.0 file without schema_version
     if (major != 1) {
         out.push_back({Diagnostic::Code::BadMajorVersion, "schema_version major is " + std::to_string(major) + ", expected 1",
                        "circuit.schema_version"});
@@ -322,7 +337,7 @@ std::vector<Diagnostic> validate(const ir::Circuit &circuit) {
     for (flatbuffers::uoffset_t i = 0; i < subs->size(); ++i) {
         const auto *sc = subs->Get(i);
         if (sc) {
-            validate_subcircuit(out, sc, i, n_buffers);
+            validate_subcircuit(out, sc, i, n_buffers, minor);
         }
     }
     return out;

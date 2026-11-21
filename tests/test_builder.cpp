@@ -74,6 +74,47 @@ TEST_CASE("explicit threshold add_sample", "[builder]") {
     REQUIRE(sa->probability() == 0.5);
 }
 
+TEST_CASE("builder writes the lowest schema minor that covers the query kinds", "[builder][hull]") {
+    auto build = [](bool with_hull) {
+        pcfb::builder b;
+        auto a = b.add_sample(0.5, "A", 0);
+        REQUIRE(a);
+        auto n = b.add_op(pcfb::OpCode::BITWISE_NOT, std::array<std::uint32_t, 1>{*a});
+        REQUIRE(n);
+        REQUIRE(b.add_query(*n, pcfb::QueryKind::PROBABILITY, "boolean"));
+        if (with_hull) {
+            REQUIRE(b.add_query(*n, pcfb::QueryKind::MONOTONE_HULL_PROBABILITY, "hull"));
+        }
+        auto bytes = b.finish();
+        REQUIRE(bytes);
+        return *bytes;
+    };
+
+    const auto v11 = build(false);
+    auto c11 = pcfb::io::from_bytes(v11);
+    REQUIRE(c11);
+    REQUIRE(c11->schema_version() == pcfb::kSchemaVersionV11);
+    REQUIRE(pcfb::validate(*c11).empty());
+
+    const auto v12 = build(true);
+    auto c12 = pcfb::io::from_bytes(v12);
+    REQUIRE(c12);
+    REQUIRE(c12->schema_version() == pcfb::kSchemaVersionV12);
+    REQUIRE(pcfb::validate(*c12).empty());
+    const auto *q = c12->subcircuits()->Get(0)->queries();
+    REQUIRE(q->size() == 2);
+    REQUIRE(q->Get(1)->kind() == pcfb::QueryKind::MONOTONE_HULL_PROBABILITY);
+}
+
+TEST_CASE("builder rejects query kinds it does not define", "[builder][hull]") {
+    pcfb::builder b;
+    auto a = b.add_sample(0.5, "A", 0);
+    REQUIRE(a);
+    auto bad = b.add_query(*a, static_cast<pcfb::QueryKind>(7));
+    REQUIRE_FALSE(bad);
+    REQUIRE(bad.error().code == pcfb::Error::Code::BuilderError);
+}
+
 TEST_CASE("k-of-n k > n is rejected", "[builder]") {
     pcfb::builder b;
     auto a = b.add_sample(0.5, "A", 0);

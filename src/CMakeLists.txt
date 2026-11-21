@@ -12,6 +12,7 @@ FetchContent_MakeAvailable(flatbuffers)
 
 set(FBS_FILE ${PROJECT_SOURCE_DIR}/schema/pcfb.fbs)
 set(FBS_V1_FILE ${PROJECT_SOURCE_DIR}/schema/history/pcfb_v1.fbs)
+set(FBS_V1_1_FILE ${PROJECT_SOURCE_DIR}/schema/history/pcfb_v1_1.fbs)
 set(PCFB_GEN_ROOT "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set(GENERATED_HEADER "${PCFB_GEN_ROOT}/include/pcfb_generated.h")
 set(SCHEMA_BINARY "${PCFB_GEN_ROOT}/schema/pcfb.bfbs")
@@ -54,8 +55,9 @@ add_custom_target(pcfb_schema
 
 add_custom_target(pcfb_conform
     COMMAND flatc --conform ${FBS_V1_FILE} ${FBS_FILE}
-    DEPENDS flatc ${FBS_FILE} ${FBS_V1_FILE}
-    COMMENT "Checking v1.1 schema conforms to v1"
+    COMMAND flatc --conform ${FBS_V1_1_FILE} ${FBS_FILE}
+    DEPENDS flatc ${FBS_FILE} ${FBS_V1_FILE} ${FBS_V1_1_FILE}
+    COMMENT "Checking the canonical schema conforms to v1 and v1.1"
     VERBATIM
 )
 

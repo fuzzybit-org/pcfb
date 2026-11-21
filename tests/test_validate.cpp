@@ -194,3 +194,51 @@ TEST_CASE("§8.6 unique event_id and at least one query", "[validate]") {
         REQUIRE(has_code(validate_bytes(pack(m)), pcfb::Diagnostic::Code::MissingQuery));
     }
 }
+
+TEST_CASE("§8.7 query kinds and schema minor", "[validate][hull]") {
+    auto add_query = [](pcfb::CircuitT &m, std::uint32_t target, pcfb::QueryKind kind) {
+        auto q = std::make_unique<pcfb::QueryT>();
+        q->target = target;
+        q->kind = kind;
+        m.subcircuits[0]->queries.push_back(std::move(q));
+    };
+
+    SECTION("MONOTONE_HULL_PROBABILITY in a v1.2 file, on a target with an inverted input") {
+        auto m = valid_skeleton();
+        m.schema_version = pcfb::kSchemaVersionV12;
+        m.subcircuits[0]->operators[1]->opcode = pcfb::OpCode::BITWISE_AND;
+        m.subcircuits[0]->operators[1]->inputs.clear();
+        m.subcircuits[0]->operators[1]->inverted_inputs = {0};
+        add_query(m, 1, pcfb::QueryKind::MONOTONE_HULL_PROBABILITY);
+        REQUIRE(validate_bytes(pack(m)).empty());
+    }
+    SECTION("MONOTONE_HULL_PROBABILITY on a SAMPLE target") {
+        auto m = valid_skeleton();
+        m.schema_version = pcfb::kSchemaVersionV12;
+        add_query(m, 0, pcfb::QueryKind::MONOTONE_HULL_PROBABILITY);
+        REQUIRE(validate_bytes(pack(m)).empty());
+    }
+    SECTION("MONOTONE_HULL_PROBABILITY with schema_version 1.1") {
+        auto m = valid_skeleton();
+        add_query(m, 1, pcfb::QueryKind::MONOTONE_HULL_PROBABILITY);
+        REQUIRE(has_code(validate_bytes(pack(m)), pcfb::Diagnostic::Code::SchemaVersionTooOld));
+    }
+    SECTION("MONOTONE_HULL_PROBABILITY without schema_version (v1.0)") {
+        auto m = valid_skeleton();
+        m.schema_version = 0;
+        add_query(m, 1, pcfb::QueryKind::MONOTONE_HULL_PROBABILITY);
+        REQUIRE(has_code(validate_bytes(pack(m)), pcfb::Diagnostic::Code::SchemaVersionTooOld));
+    }
+    SECTION("a later minor is accepted") {
+        auto m = valid_skeleton();
+        m.schema_version = 0x00010009u;
+        add_query(m, 1, pcfb::QueryKind::MONOTONE_HULL_PROBABILITY);
+        REQUIRE(validate_bytes(pack(m)).empty());
+    }
+    SECTION("unknown kind") {
+        auto m = valid_skeleton();
+        m.schema_version = 0x00010009u;
+        add_query(m, 1, static_cast<pcfb::QueryKind>(200));
+        REQUIRE(has_code(validate_bytes(pack(m)), pcfb::Diagnostic::Code::UnknownQueryKind));
+    }
+}

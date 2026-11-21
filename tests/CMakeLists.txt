@@ -15,6 +15,7 @@ add_executable(pcfb_tests
     test_validate.cpp
     test_fixtures.cpp
     test_roundtrip.cpp
+    test_schema_files.cpp
     exact_eval.cpp
 )
 target_link_libraries(pcfb_tests PRIVATE pcfb Catch2::Catch2WithMain)
@@ -24,6 +25,7 @@ target_include_directories(pcfb_tests PRIVATE
 )
 target_compile_definitions(pcfb_tests PRIVATE
     PCFB_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    PCFB_SCHEMA_DIR="${PROJECT_SOURCE_DIR}/schema"
 )
 
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)

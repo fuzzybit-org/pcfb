@@ -1,6 +1,6 @@
 /**
  * @file validate.h
- * @brief Normative PCFB v1.1 validation (spec §8).
+ * @brief Normative PCFB v1.2 validation (spec §8).
  */
 #pragma once
 
@@ -42,6 +42,9 @@ struct Diagnostic {
         // extras that still violate the core-1.1 profile
         ExtraSubcircuit,
         InvalidFile,
+        // §8.7 (v1.2); appended so earlier codes keep their values
+        UnknownQueryKind,
+        SchemaVersionTooOld,
     };
 
     Code code{Code::Ok};
@@ -51,7 +54,9 @@ struct Diagnostic {
 
 /// Validates every numbered rule in spec §8 against an already-verified
 /// (`pcfb::io::{read,from_bytes}`) circuit view. Returns an empty vector iff
-/// the circuit is a conforming core-1.1 file.
+/// the circuit is a conforming v1.2 file (`core-1.1` opset). A query kind newer
+/// than this library is reported as `UnknownQueryKind`: a runtime cannot
+/// answer it and must reject the file (spec §8).
 [[nodiscard]] std::vector<Diagnostic> validate(const ir::Circuit &circuit);
 
 } // namespace pcfb

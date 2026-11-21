@@ -36,5 +36,6 @@ int main(int argc, char **argv) {
     rc |= write_file(dir / "and2.pcfb", pcfb::fixtures::and2());
     rc |= write_file(dir / "kofn.pcfb", pcfb::fixtures::kofn());
     rc |= write_file(dir / "inverted.pcfb", pcfb::fixtures::inverted());
+    rc |= write_file(dir / "delete_term.pcfb", pcfb::fixtures::delete_term());
     return rc;
 }

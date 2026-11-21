@@ -71,9 +71,18 @@ bool eval_op(OpCode opcode, const std::vector<std::uint8_t> &ins, std::uint32_t 
     }
 }
 
-} // namespace
+struct RandomEvent {
+    std::uint32_t tensor;
+    double p;
+};
 
-double exact_probability(const ir::Circuit &circuit, std::uint32_t query_index) {
+/// Enumerated SAMPLE variables plus SAMPLE outputs substituted by constants.
+struct Variables {
+    std::vector<RandomEvent> events;
+    std::vector<std::int8_t> constant; // per tensor: -1 not a constant SAMPLE, else 0/1
+};
+
+const SubCircuit &query_subcircuit(const ir::Circuit &circuit, std::uint32_t query_index) {
     if (!circuit.valid() || !circuit.subcircuits() || circuit.subcircuits()->size() == 0) {
         throw std::runtime_error("exact evaluator: empty circuit");
     }
@@ -81,18 +90,15 @@ double exact_probability(const ir::Circuit &circuit, std::uint32_t query_index) 
     if (!sc || !sc->tensors() || !sc->operators() || !sc->queries() || query_index >= sc->queries()->size()) {
         throw std::runtime_error("exact evaluator: missing query");
     }
-    const auto n_tensors = sc->tensors()->size();
-    const auto *ops = sc->operators();
+    return *sc;
+}
 
-    struct RandomEvent {
-        std::uint32_t tensor;
-        double p;
-    };
-    std::vector<RandomEvent> events;
-    std::vector<std::int8_t> constant(n_tensors, -1); // -1 unknown, 0/1 constant SAMPLE
-
-    for (flatbuffers::uoffset_t i = 0; i < ops->size(); ++i) {
-        const auto *op = ops->Get(i);
+/// `ones_are_constant`: Boolean semantics substitute p = 1 by 1; the monotone
+/// hull keeps p = 1 SAMPLEs as variables. Both substitute p = 0 by 0.
+Variables collect_variables(const SubCircuit &sc, bool ones_are_constant) {
+    Variables vars;
+    vars.constant.assign(sc.tensors()->size(), -1);
+    for (const auto *op : *sc.operators()) {
         if (!op || op->opcode() != OpCode::SAMPLE) {
             continue;
         }
@@ -100,59 +106,101 @@ double exact_probability(const ir::Circuit &circuit, std::uint32_t query_index) 
         if (!sa) {
             throw std::runtime_error("exact evaluator: SAMPLE without SampleArgs");
         }
-        if (sa->always_true() || sa->probability() == 1.0) {
-            constant[op->output()] = 1;
-        } else if (sa->probability() == 0.0) {
-            constant[op->output()] = 0;
+        const bool one = sa->always_true() || sa->probability() == 1.0;
+        if (one && ones_are_constant) {
+            vars.constant[op->output()] = 1;
+        } else if (!one && sa->probability() == 0.0) {
+            vars.constant[op->output()] = 0;
         } else {
-            events.push_back({op->output(), sa->probability()});
+            vars.events.push_back({op->output(), one ? 1.0 : sa->probability()});
         }
     }
-    if (events.size() > 24) {
+    if (vars.events.size() > 24) {
         throw std::runtime_error("exact evaluator: more than 24 random events");
     }
+    return vars;
+}
 
-    const auto target = sc->queries()->Get(query_index)->target();
-    const auto n_rand = events.size();
-    const std::uint32_t n_assign = n_rand == 0 ? 1u : (1u << n_rand);
+/// Value of `target` for the assignment `mask` over `vars.events`.
+bool evaluate(const SubCircuit &sc, const Variables &vars, std::uint32_t mask, std::uint32_t target) {
+    std::vector<std::uint8_t> value(sc.tensors()->size(), 0);
+    for (std::size_t e = 0; e < vars.events.size(); ++e) {
+        value[vars.events[e].tensor] = ((mask >> e) & 1u) != 0 ? 1 : 0;
+    }
+    for (std::size_t t = 0; t < value.size(); ++t) {
+        if (vars.constant[t] >= 0) {
+            value[t] = static_cast<std::uint8_t>(vars.constant[t]);
+        }
+    }
+    for (const auto *op : *sc.operators()) {
+        if (!op || op->opcode() == OpCode::SAMPLE) {
+            continue;
+        }
+        std::vector<std::uint8_t> ins;
+        if (op->inputs()) {
+            for (auto id : *op->inputs()) {
+                ins.push_back(value[id]);
+            }
+        }
+        if (op->inverted_inputs()) {
+            for (auto id : *op->inverted_inputs()) {
+                ins.push_back(static_cast<std::uint8_t>(1u - value[id]));
+            }
+        }
+        const std::uint32_t k =
+            (op->args_type() == OpArgs::KofNArgs && op->args_as_KofNArgs()) ? op->args_as_KofNArgs()->k() : 0;
+        value[op->output()] = eval_op(op->opcode(), ins, k) ? 1 : 0;
+    }
+    return value[target] != 0;
+}
+
+double mass(const Variables &vars, std::uint32_t mask) {
+    double m = 1.0;
+    for (std::size_t e = 0; e < vars.events.size(); ++e) {
+        m *= ((mask >> e) & 1u) != 0 ? vars.events[e].p : (1.0 - vars.events[e].p);
+    }
+    return m;
+}
+
+} // namespace
+
+double exact_probability(const ir::Circuit &circuit, std::uint32_t query_index) {
+    const auto &sc = query_subcircuit(circuit, query_index);
+    const auto vars = collect_variables(sc, /*ones_are_constant=*/true);
+    const auto target = sc.queries()->Get(query_index)->target();
+    const std::uint32_t n_assign = 1u << vars.events.size();
     double total = 0.0;
-
     for (std::uint32_t mask = 0; mask < n_assign; ++mask) {
-        std::vector<std::uint8_t> value(n_tensors, 0);
-        double mass = 1.0;
-        for (std::size_t e = 0; e < n_rand; ++e) {
-            const bool bit = ((mask >> e) & 1u) != 0;
-            value[events[e].tensor] = bit ? 1 : 0;
-            mass *= bit ? events[e].p : (1.0 - events[e].p);
+        if (evaluate(sc, vars, mask, target)) {
+            total += mass(vars, mask);
         }
-        for (std::uint32_t t = 0; t < n_tensors; ++t) {
-            if (constant[t] >= 0) {
-                value[t] = static_cast<std::uint8_t>(constant[t]);
-            }
-        }
+    }
+    return total;
+}
 
-        for (flatbuffers::uoffset_t i = 0; i < ops->size(); ++i) {
-            const auto *op = ops->Get(i);
-            if (!op || op->opcode() == OpCode::SAMPLE) {
-                continue;
+double exact_hull_probability(const ir::Circuit &circuit, std::uint32_t query_index) {
+    const auto &sc = query_subcircuit(circuit, query_index);
+    const auto vars = collect_variables(sc, /*ones_are_constant=*/false);
+    const auto target = sc.queries()->Get(query_index)->target();
+    const auto n = vars.events.size();
+    const std::uint32_t n_assign = 1u << n;
+    std::vector<std::uint8_t> hull(n_assign);
+    for (std::uint32_t mask = 0; mask < n_assign; ++mask) {
+        hull[mask] = evaluate(sc, vars, mask, target) ? 1 : 0;
+    }
+    // ↑g(x) = OR over y ⊆ x of g(y): subset-OR (zeta) transform, one variable at a time.
+    for (std::size_t e = 0; e < n; ++e) {
+        const std::uint32_t bit = 1u << e;
+        for (std::uint32_t mask = 0; mask < n_assign; ++mask) {
+            if ((mask & bit) != 0) {
+                hull[mask] = static_cast<std::uint8_t>(hull[mask] | hull[mask ^ bit]);
             }
-            std::vector<std::uint8_t> ins;
-            if (op->inputs()) {
-                for (auto id : *op->inputs()) {
-                    ins.push_back(value[id]);
-                }
-            }
-            if (op->inverted_inputs()) {
-                for (auto id : *op->inverted_inputs()) {
-                    ins.push_back(static_cast<std::uint8_t>(1u - value[id]));
-                }
-            }
-            const std::uint32_t k =
-                (op->args_type() == OpArgs::KofNArgs && op->args_as_KofNArgs()) ? op->args_as_KofNArgs()->k() : 0;
-            value[op->output()] = eval_op(op->opcode(), ins, k) ? 1 : 0;
         }
-        if (value[target]) {
-            total += mass;
+    }
+    double total = 0.0;
+    for (std::uint32_t mask = 0; mask < n_assign; ++mask) {
+        if (hull[mask] != 0) {
+            total += mass(vars, mask);
         }
     }
     return total;

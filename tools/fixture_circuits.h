@@ -82,8 +82,45 @@ inline Result<std::vector<std::byte>> inverted() {
     return b.finish();
 }
 
+/// Delete-term sequence SEQ = (A ∨ B) ∧ ¬(X ∧ Y) with A=0.25, B=0.5 and two
+/// p = 1 flags X, Y. Query 0 (PROBABILITY) is exactly 0: X ∧ Y holds in every
+/// sample. Query 1 (MONOTONE_HULL_PROBABILITY, v1.2) is P(A ∨ B) = 0.625: the
+/// flags may be dropped, so the hull is the union of the cut sets of A ∨ B that
+/// do not contain {X, Y}.
+inline Result<std::vector<std::byte>> delete_term() {
+    builder b;
+    b.name("delete_term");
+    pin_fixture_metadata(b);
+    auto a = b.add_sample(0.25, "A", 0);
+    auto c = b.add_sample(0.5, "B", 1);
+    auto x = b.add_sample(1.0, "X", 2);
+    auto y = b.add_sample(1.0, "Y", 3);
+    if (!a || !c || !x || !y) {
+        return std::unexpected((!a ? a : !c ? c : !x ? x : y).error());
+    }
+    auto f = b.add_op(OpCode::BITWISE_OR, std::array<std::uint32_t, 2>{*a, *c}, {}, std::nullopt, "F");
+    auto del = b.add_op(OpCode::BITWISE_AND, std::array<std::uint32_t, 2>{*x, *y}, {}, std::nullopt, "DEL");
+    if (!f || !del) {
+        return std::unexpected((!f ? f : del).error());
+    }
+    auto seq = b.add_op(OpCode::BITWISE_AND, std::array<std::uint32_t, 1>{*f}, std::array<std::uint32_t, 1>{*del},
+                        std::nullopt, "SEQ");
+    if (!seq) {
+        return std::unexpected(seq.error());
+    }
+    if (auto q = b.add_query(*seq, QueryKind::PROBABILITY, "seq_boolean"); !q) {
+        return std::unexpected(q.error());
+    }
+    if (auto q = b.add_query(*seq, QueryKind::MONOTONE_HULL_PROBABILITY, "seq_hull"); !q) {
+        return std::unexpected(q.error());
+    }
+    return b.finish();
+}
+
 inline constexpr double kAnd2Probability = 0.125;
 inline constexpr double kKofnProbability = 0.5;
 inline constexpr double kInvertedProbability = 0.125;
+inline constexpr double kDeleteTermProbability = 0.0;
+inline constexpr double kDeleteTermHullProbability = 0.625;
 
 } // namespace pcfb::fixtures

@@ -1,6 +1,6 @@
 /**
  * @file builder.h
- * @brief In-memory construction of conforming PCFB v1.1 (`core-1.1`) files.
+ * @brief In-memory construction of conforming PCFB v1.2 (`core-1.1` opset) files.
  */
 #pragma once
 
@@ -23,8 +23,11 @@ namespace pcfb {
 /// Tensor ids are assigned in SSA order: each `add_sample` / `add_op` appends
 /// one tensor that is the unique output of that operator. Inputs must refer to
 /// already-created tensors, which is exactly spec §3.2 (topological order +
-/// single assignment). `finish()` writes required metadata, `schema_version =
-/// 0x00010001`, and an empty `buffers[0]`.
+/// single assignment). `finish()` writes required metadata, an empty
+/// `buffers[0]`, and the lowest `schema_version` that covers the query kinds
+/// used: `0x00010001` unless a v1.2 kind (`MONOTONE_HULL_PROBABILITY`) is
+/// present, then `0x00010002`. Files without v1.2 features are therefore
+/// byte-identical to v1.1 builder output.
 class builder {
 public:
     using tensor_id = std::uint32_t;
@@ -57,6 +60,8 @@ public:
                              std::span<const std::uint32_t> inverted_inputs = {},
                              std::optional<std::uint32_t> args = std::nullopt, std::string_view name = {});
 
+    /// Rejects kinds this library does not define. Several queries may share a
+    /// target (e.g. PROBABILITY and MONOTONE_HULL_PROBABILITY of one sequence).
     Result<void> add_query(std::uint32_t target, QueryKind kind = QueryKind::PROBABILITY, std::string_view name = {},
                            std::span<const double> confidence = {});
 
@@ -65,7 +70,7 @@ public:
     Result<void> set(std::string_view key, double value);
     Result<void> set(std::string_view key, std::span<const std::byte> value);
 
-    /// Serialise a conforming v1.1 buffer. Fails if there is no query, a
+    /// Serialise a conforming buffer. Fails if there is no query, a
     /// duplicate `event_id`, or a previous `add_*` error left the builder dirty.
     Result<std::vector<std::byte>> finish();
 
