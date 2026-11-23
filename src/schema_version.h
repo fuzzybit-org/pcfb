@@ -19,10 +19,10 @@ constexpr std::uint32_t query_kind_minor(QueryKind kind) noexcept {
     return 0;
 }
 
-/// Minor version that introduced `mode`, or 0 if this library does not define it. Every mode is part of
+/// Minor version (of major 1) that introduced `mode`, or 0 if this library does not define it. Every mode is part of
 /// the v1.2 amendment, so a file that uses any of them (and therefore sets `literal_samples` or a
 /// non-default mode) must declare minor >= 2.
-constexpr std::uint32_t literal_mode_known(LiteralMode mode) noexcept {
+constexpr std::uint32_t literal_mode_minor(LiteralMode mode) noexcept {
     switch (mode) {
     case LiteralMode::ATOM_SPLIT:
     case LiteralMode::OMEGA_L:

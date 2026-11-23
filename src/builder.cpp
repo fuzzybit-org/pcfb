@@ -261,7 +261,7 @@ Result<void> builder::add_query(std::uint32_t target, QueryKind kind, std::strin
             return std::unexpected(builder_error("query confidence levels must be in (0, 1)"));
         }
     }
-    if (detail::literal_mode_known(literals.mode) == 0) {
+    if (detail::literal_mode_minor(literals.mode) == 0) {
         return std::unexpected(builder_error("unknown literal mode " +
                                              std::to_string(static_cast<unsigned>(literals.mode))));
     }

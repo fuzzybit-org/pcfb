@@ -40,4 +40,19 @@ struct query_literals {
     return out;
 }
 
+/// Whether answering `query` requires a runtime to implement its `literal_mode` (spec §8, runtimes).
+///
+/// False when `literal_samples` is absent or empty: such a query is the plain hull whatever its mode, so a runtime
+/// that implements the plain hull MUST answer it and MUST NOT reject it for a mode it does not implement. That is
+/// what lets a plain-hull runtime read pre-amendment hull files, and a query whose non-default mode was written with
+/// no list. True otherwise: the mode changes the answer, so a runtime that does not implement it MUST reject the
+/// query before sampling.
+///
+/// A runtime MAY accept a query whose listed samples all lie outside the target's cone, because every mode then
+/// equals the plain hull (spec §5.2); deciding that needs the cone, so this helper does not look at it.
+[[nodiscard]] inline bool literals_require_mode(const Query &query) {
+    const auto *samples = query.literal_samples();
+    return samples != nullptr && samples->size() != 0;
+}
+
 } // namespace pcfb

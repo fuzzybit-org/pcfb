@@ -199,9 +199,12 @@ For a hull query $q$ with target $g$ and the listed set $D$:
   record that it deliberately reads the marked literals as ordinary negations.
 
 In every mode $\theta_{PROBABILITY} \le \theta_{OMEGA\_L} \le \theta_{NEGATION}$ (fixing variables restricts the
-existential), and $\theta_{ATOM\_SPLIT}$ has no fixed order with $\theta_{NEGATION}$. An inverted edge into an unlisted
-sample is a Boolean complement in every mode, and `always_true` samples and constants behave as in §4–§5: an
-`always_true` `SAMPLE` is a droppable event, `BITWISE_ONES` is a constant.
+existential), and also $\theta_{OMEGA\_L} \le \theta_{ATOM\_SPLIT}$: take an $\omega_L$ witness $y^\* \le X$ with
+$y^\*_s = X_s$ on $D$ and set $\bar y_s = \neg X_s = \neg y^\*_s$, so $\tilde g(y^\*, \bar y) = g(y^\*) = 1$. The
+chain is therefore $\theta_{PROBABILITY} \le \theta_{OMEGA\_L} \le \theta_{ATOM\_SPLIT}$, with
+$\theta_{OMEGA\_L} \le \theta_{NEGATION}$; only `ATOM_SPLIT` against `NEGATION` is unordered in general. An inverted
+edge into an unlisted sample is a Boolean complement in every mode, and `always_true` samples and constants behave as
+in §4–§5: an `always_true` `SAMPLE` is a droppable event, `BITWISE_ONES` is a constant.
 
 `literal_samples` and a non-default `literal_mode` are only meaningful on a `MONOTONE_HULL_PROBABILITY` query (§8,
 rule 8).
@@ -289,10 +292,24 @@ A conforming reader MUST verify (FlatBuffers verifier) and SHOULD validate:
 Runtimes (normative): before evaluating any query, a runtime MUST check that it implements the kind of every query in
 the file, and MUST reject the file if it does not (at planning or load time, not after sampling). A runtime MUST NOT
 answer a query of one kind with the value of another; in particular it MUST NOT evaluate `MONOTONE_HULL_PROBABILITY`
-as `PROBABILITY`. A query kind the runtime does not know (rule 7) is a kind it does not implement. The same holds per
-`literal_mode`: a runtime that does not implement a mode MUST reject a query that uses it before sampling, and MUST NOT
-answer a mode with the value of another mode (in particular not `ATOM_SPLIT` as `NEGATION`). An unknown
-`literal_mode` value is an unknown *enum* value, not an unknown field, so §2's rule applies: reject, do not guess.
+as `PROBABILITY`. A query kind the runtime does not know (rule 7) is a kind it does not implement.
+
+The same holds per `literal_mode`, but the obligation is scoped to the queries where the mode can change the answer:
+
+- a query whose `literal_samples` is **empty** is the plain hull $\uparrow g$ whatever its `literal_mode` (§5.1.1).
+  A runtime that implements the plain hull MUST answer it, and MUST NOT reject it for a mode it does not implement.
+  The same holds for a `PROBABILITY` query, which never carries the fields. A pre-amendment hull file — no
+  `literal_samples`, or a non-default `literal_mode` alone — is therefore readable by a plain-hull runtime;
+- a runtime **MUST NOT** answer a query with a non-empty `literal_samples` under a mode it does not implement, and
+  MUST NOT answer a mode with the value of another mode (in particular not `ATOM_SPLIT` as `NEGATION`);
+- a runtime **MAY** accept a query whose listed samples are all outside the target's cone: every mode then equals the
+  plain hull (§5.2), so the mode cannot change the answer. Such a runtime answers the plain hull and records that it
+  ignored the mode; it does not have to implement it;
+- an unknown `literal_mode` value is an unknown *enum* value, not an unknown field, so §2's rule applies to the file:
+  reject, do not guess.
+
+`pcfb::literals_require_mode(query)` states the first three rules in one place: it is false when `literal_samples` is
+absent or empty, true otherwise, so a runtime rejects exactly when it returns true and it lacks the mode.
 
 ## 9. Reference API (C++, `pcfb` library)
 
@@ -365,5 +382,5 @@ or non-empty, and `delete_term.pcfb`'s two hull queries still carry neither.
 | Literal atoms (amendment) | — | `Query.literal_mode` (`LiteralMode`, default `ATOM_SPLIT`) and `Query.literal_samples`, both appended; §5.1.1 |
 | Validation (amendment) | — | rule 8: `UnknownLiteralMode`, `LiteralSampleNotSample`, `LiteralSamplesNotAscending`, `LiteralFieldsOnNonHullQuery` |
 | Writers (amendment) | — | MUST NOT create or remove inverted edges into listed samples under `ATOM_SPLIT` (§5.2) |
-| Runtimes (amendment) | — | MUST reject a `literal_mode` they do not implement; MUST NOT substitute modes |
+| Runtimes (amendment) | — | MUST reject a `literal_mode` they do not implement **only when `literal_samples` is non-empty**; MUST NOT substitute modes; a query with an empty list is the plain hull whatever its mode, so a plain-hull runtime answers it |
 | Fixtures (amendment) | — | `literal_atoms.pcfb` (§10); every earlier fixture byte-identical |

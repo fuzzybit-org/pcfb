@@ -8,6 +8,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <random>
 #include <vector>
 
@@ -75,9 +76,9 @@ TEST_CASE("literal hull vector 1: g = a ∧ ¬b with b listed", "[exact_eval][li
     const std::array<std::uint32_t, 1> listed{v.listed};
 
     REQUIRE(pcfb::test::exact_probability(*circuit) == 0.375); // P(a)(1 − P(b))
-    REQUIRE_THAT(literal_hull(*circuit, 0, pcfb::LiteralMode::ATOM_SPLIT, listed), WithinAbs(0.375, 1e-15));
-    REQUIRE_THAT(literal_hull(*circuit, 0, pcfb::LiteralMode::OMEGA_L, listed), WithinAbs(0.375, 1e-15));
-    REQUIRE_THAT(literal_hull(*circuit, 0, pcfb::LiteralMode::NEGATION, listed), WithinAbs(0.5, 1e-15));
+    REQUIRE(literal_hull(*circuit, 0, pcfb::LiteralMode::ATOM_SPLIT, listed) == 0.375);
+    REQUIRE(literal_hull(*circuit, 0, pcfb::LiteralMode::OMEGA_L, listed) == 0.375);
+    REQUIRE(literal_hull(*circuit, 0, pcfb::LiteralMode::NEGATION, listed) == 0.5);
     // ↑g = a: with b dropped the witness is a alone.
     REQUIRE(pcfb::test::exact_hull_probability(*circuit) == 0.5);
 }
@@ -90,9 +91,9 @@ TEST_CASE("literal hull vector 2: g = c ∧ ¬(¬b) with b listed", "[exact_eval
     const std::array<std::uint32_t, 1> listed{v.listed};
 
     REQUIRE(pcfb::test::exact_probability(*circuit) == 0.125); // P(b)P(c)
-    REQUIRE_THAT(literal_hull(*circuit, 0, pcfb::LiteralMode::ATOM_SPLIT, listed), WithinAbs(0.5, 1e-15));
-    REQUIRE_THAT(literal_hull(*circuit, 0, pcfb::LiteralMode::OMEGA_L, listed), WithinAbs(0.125, 1e-15));
-    REQUIRE_THAT(literal_hull(*circuit, 0, pcfb::LiteralMode::NEGATION, listed), WithinAbs(0.125, 1e-15));
+    REQUIRE(literal_hull(*circuit, 0, pcfb::LiteralMode::ATOM_SPLIT, listed) == 0.5);
+    REQUIRE(literal_hull(*circuit, 0, pcfb::LiteralMode::OMEGA_L, listed) == 0.125);
+    REQUIRE(literal_hull(*circuit, 0, pcfb::LiteralMode::NEGATION, listed) == 0.125);
     // The plain hull is ↑(b ∧ c) = b ∧ c.
     REQUIRE(pcfb::test::exact_hull_probability(*circuit) == 0.125);
 }
@@ -332,7 +333,54 @@ TEST_CASE("literal hull modes against the plain hull on 500 seeded circuits", "[
         // g ≤ ω_L g ≤ ↑g pointwise, hence on probabilities (Theorem 1(a, d); the atom list only adds fixed events).
         REQUIRE(boolean <= omega + kCrossCheckTolerance);
         REQUIRE(omega <= negation + kCrossCheckTolerance);
+        // omega_L fixes the listed events, so its witness is an atom-split witness: theta_OMEGA_L <= theta_ATOM_SPLIT
+        // (spec 5.1.1). This is the strongest cheap consistency check between the two evaluators.
+        REQUIRE(omega <= split + kCrossCheckTolerance);
         // No order between atom_split and the plain hull (Theorem 10(d)); only g ≤ h holds (Theorem 10(b)).
         REQUIRE(boolean <= split + kCrossCheckTolerance);
+    }
+}
+
+TEST_CASE("literals_require_mode: only a non-empty list obliges a runtime to know the mode", "[literal][api]") {
+    // What a plain-hull runtime needs to decide whether it may answer a hull query (spec §8, runtimes): a query
+    // with an absent or empty `literal_samples` is the plain hull whatever its mode, so such a runtime answers it.
+    auto build = [](pcfb::LiteralMode mode, std::optional<std::vector<std::uint32_t>> samples) {
+        pcfb::builder b;
+        auto a = b.add_sample(0.5, "A", 0);
+        auto c = b.add_sample(0.25, "B", 1);
+        REQUIRE(a);
+        REQUIRE(c);
+        const std::array<std::uint32_t, 1> pos{*a};
+        const std::array<std::uint32_t, 1> inv{*c};
+        auto g = b.add_op(pcfb::OpCode::BITWISE_AND, pos, inv);
+        REQUIRE(g);
+        pcfb::query_literals literals{.mode = mode};
+        if (samples) {
+            literals.samples = *samples;
+        }
+        REQUIRE(b.add_query(*g, pcfb::QueryKind::MONOTONE_HULL_PROBABILITY, "hull", {}, literals));
+        auto bytes = b.finish();
+        REQUIRE(bytes);
+        return *bytes;
+    };
+
+    SECTION("a pre-amendment hull query, and every mode with an empty list, needs no mode") {
+        for (const auto mode : {pcfb::LiteralMode::ATOM_SPLIT, pcfb::LiteralMode::OMEGA_L, pcfb::LiteralMode::NEGATION}) {
+            auto bytes = build(mode, std::nullopt);
+            auto circuit = pcfb::io::from_bytes(bytes);
+            REQUIRE(circuit);
+            REQUIRE(pcfb::validate(*circuit).empty());
+            const auto *query = circuit->subcircuits()->Get(0)->queries()->Get(0);
+            REQUIRE_FALSE(pcfb::literals_require_mode(*query));
+            // Such a query is the plain hull in every mode.
+            REQUIRE(pcfb::test::exact_literal_hull_probability(*circuit) == pcfb::test::exact_hull_probability(*circuit));
+        }
+    }
+    SECTION("a non-empty list requires the mode") {
+        auto bytes = build(pcfb::LiteralMode::OMEGA_L, std::vector<std::uint32_t>{1});
+        auto circuit = pcfb::io::from_bytes(bytes);
+        REQUIRE(circuit);
+        REQUIRE(pcfb::validate(*circuit).empty());
+        REQUIRE(pcfb::literals_require_mode(*circuit->subcircuits()->Get(0)->queries()->Get(0)));
     }
 }

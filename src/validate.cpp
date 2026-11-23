@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -76,10 +77,10 @@ const char *string_meta(const Circuit *root, const char *key) {
 
 /// §8.8: the literal fields of one query. Indices outside the target's cone are valid: passes may remove
 /// events from a cone (spec §5.2), so a list may name samples the target happens to stop depending on.
-void validate_literals(std::vector<Diagnostic> &out, const Query *q, const SubCircuit &sc, std::uint32_t n_tensors,
-                       std::uint32_t schema_minor, const std::string &qloc) {
+void validate_literals(std::vector<Diagnostic> &out, const Query *q, std::span<const std::uint8_t> from_sample,
+                       std::uint32_t n_tensors, std::uint32_t schema_minor, const std::string &qloc) {
     const auto mode = q->literal_mode();
-    if (detail::literal_mode_known(mode) == 0) {
+    if (detail::literal_mode_minor(mode) == 0) {
         out.push_back({Diagnostic::Code::UnknownLiteralMode,
                        "literal mode " + std::to_string(static_cast<unsigned>(mode)) +
                            " is not defined in pcfb 1.2; a runtime must reject the query",
@@ -105,15 +106,6 @@ void validate_literals(std::vector<Diagnostic> &out, const Query *q, const SubCi
     }
     if (!non_empty) {
         return;
-    }
-    // A tensor is a valid literal sample iff its producer is a SAMPLE op.
-    std::vector<std::uint8_t> from_sample(n_tensors, 0);
-    if (const auto *ops = sc.operators()) {
-        for (const auto *op : *ops) {
-            if (op && op->opcode() == OpCode::SAMPLE && op->output() < n_tensors) {
-                from_sample[op->output()] = 1;
-            }
-        }
     }
     for (flatbuffers::uoffset_t i = 0; i < samples->size(); ++i) {
         const auto id = samples->Get(i);
@@ -162,6 +154,17 @@ void validate_subcircuit(std::vector<Diagnostic> &out, const SubCircuit *sc, std
     for (auto id : external) {
         if (id < n_tensors) {
             assigned[id] = 2;
+        }
+    }
+
+    // Per tensor: 1 iff its producer is a SAMPLE op. Built once per subcircuit, because a hull file can carry one
+    // literal query per target over a circuit with 10^5 operators.
+    std::vector<std::uint8_t> from_sample(n_tensors, 0);
+    if (const auto *ops = sc->operators()) {
+        for (const auto *op : *ops) {
+            if (op && op->opcode() == OpCode::SAMPLE && op->output() < n_tensors) {
+                from_sample[op->output()] = 1;
+            }
         }
     }
 
@@ -333,7 +336,7 @@ void validate_subcircuit(std::vector<Diagnostic> &out, const SubCircuit *sc, std
                                    std::to_string(needed) + ", file declares " + std::to_string(schema_minor),
                                qloc + ".kind"});
             }
-            validate_literals(out, q, *sc, n_tensors, schema_minor, qloc);
+            validate_literals(out, q, from_sample, n_tensors, schema_minor, qloc);
         }
     }
 }
