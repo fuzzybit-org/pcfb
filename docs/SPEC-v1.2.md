@@ -3,7 +3,8 @@
 Status: **v1.2**. Canonical schema: [`schema/pcfb.fbs`](../schema/pcfb.fbs)
 (v1 frozen at [`schema/history/pcfb_v1.fbs`](../schema/history/pcfb_v1.fbs), v1.1 frozen at
 [`schema/history/pcfb_v1_1.fbs`](../schema/history/pcfb_v1_1.fbs); `flatc --conform` must pass against both).
-Supersedes [v1.1](SPEC-v1.1.md). The only addition is the query kind `MONOTONE_HULL_PROBABILITY` (§5, §8, §11).
+Supersedes [v1.1](SPEC-v1.1.md). The additions are the query kind `MONOTONE_HULL_PROBABILITY` (§5, §8, §11) and, as an
+amendment to 1.2, the per-query literal atoms `literal_mode` and `literal_samples` (§5.1, §5.2, §8, §11).
 
 ## 1. Purpose and position
 
@@ -37,8 +38,11 @@ Non-goals for v1.2: uncertainty distributions on parameters, time/phase dependen
 - Readers MUST accept any minor version of major 1 and ignore unknown fields (FlatBuffers forward compatibility).
   An unknown *enum value* is not an unknown field: a runtime that meets a query kind it does not implement MUST
   reject the file (§8).
-- Changes from v1.1 are wire compatible: one enum value is appended (`QueryKind.MONOTONE_HULL_PROBABILITY = 1`).
-  Changes from v1 to v1.1 are listed in [SPEC-v1.1 §11](SPEC-v1.1.md#11-changes-from-v1-summary).
+- Changes from v1.1 are wire compatible: one enum value is appended (`QueryKind.MONOTONE_HULL_PROBABILITY = 1`), and
+  the literal-atom amendment appends one enum (`LiteralMode`) and two fields to `Query`. Because FlatBuffers appends
+  fields and the added enum's default is `ATOM_SPLIT = 0`, a file that does not use them is byte-identical to what the
+  same writer produced before the amendment, and a pre-amendment reader ignores them. Changes from v1 to v1.1 are
+  listed in [SPEC-v1.1 §11](SPEC-v1.1.md#11-changes-from-v1-summary).
 - A file without `schema_version` (0) is treated as v1.0 and MAY be rejected by runtimes that require v1.1 features.
 - **Compatibility hazard.** v1.1 defined only `PROBABILITY`. A runtime written against v1.1 that does not read
   `Query.kind` would answer a v1.2 hull query as a Boolean probability. Such runtimes MUST add the kind check (§8)
@@ -119,11 +123,19 @@ enum QueryKind : ubyte {
   MONOTONE_HULL_PROBABILITY = 1, // v1.2
 }
 
+enum LiteralMode : ubyte {       // v1.2 amendment
+  ATOM_SPLIT = 0,                // default
+  OMEGA_L    = 1,
+  NEGATION   = 2,
+}
+
 table Query {
-  target: uint32;          // tensor index
-  kind: QueryKind;         // default PROBABILITY
-  name: string;            // e.g. top-event or sequence name
-  confidence: [float64];   // optional requested two-sided confidence levels, e.g. [0.95, 0.99]
+  target: uint32;                 // tensor index
+  kind: QueryKind;                // default PROBABILITY
+  name: string;                   // e.g. top-event or sequence name
+  confidence: [float64];          // optional requested two-sided confidence levels, e.g. [0.95, 0.99]
+  literal_mode: LiteralMode;      // default ATOM_SPLIT; written only when non-default
+  literal_samples: [uint32];      // sorted, duplicate-free SAMPLE outputs; written only when non-empty
 }
 ```
 
@@ -153,6 +165,47 @@ examples: fuzzybits RFC
 
 Core files have no `SubCircuit.inputs`; a profile that adds external inputs must define their role in a hull query.
 
+#### 5.1.1 Literal atoms (v1.2 amendment)
+
+Some source formats mark a complemented basic-event operand as an **atomic literal**: cut-set tools built for them
+keep `-B` in a cut set as an event of its own (with probability $1 - p_B$) and drop cut sets that contain both $B$ and
+`-B`, rather than reading `-B` as the Boolean complement of `B`. The format cannot express that in a Boolean circuit,
+so the query names the marked events instead:
+
+- **`literal_samples`** is a **sorted, duplicate-free** list of tensor indices in the same index space as
+  `Query.target`. Every listed index MUST be the output of a `SAMPLE` operator. Call the corresponding set of events
+  $D$; the list is that set. Indices **outside the cone of `target`** are valid and have no effect, because
+  transforms may remove events from a cone (§5.2).
+- **`literal_mode`** says how the complemented edges into a listed event are read. Complemented edges into an
+  **unlisted** `SAMPLE` are ordinary Boolean complements in every mode; so are complemented edges into gates (including
+  single-input gates) in every mode.
+- A **missing or empty** `literal_samples` makes every mode the plain hull $\uparrow g$ of §5.1: the query means
+  exactly what a v1.2 query meant before this amendment, and files that do not use the fields are unchanged (§2, §10).
+
+For a hull query $q$ with target $g$ and the listed set $D$:
+
+- **`ATOM_SPLIT`** (default). Build $\tilde g$ from the cone of $g$ by replacing every inverted input edge into a
+  tensor $s \in D$, within the cone of $g$, with a positive edge into a fresh variable $\bar y_s$; an edge into $s$
+  that is not inverted keeps reading $y_s$. Then
+  $$\theta = P_X\bigl[\thinspace \exists\, y \le X,\ \exists\, \bar y \le \neg X_D\ :\ \tilde g(y, \bar y) = 1 \thinspace\bigr],$$
+  where $\neg X_D$ is the componentwise complement of $X$ on $D$. Equivalently: $\tilde g$ is the plain hull in the
+  larger atom space $\mathcal{A} = E \cup \lbrace \bar e : e \in D \rbrace$, read at the coupled valuation
+  $\kappa(x)$ with $\kappa(x)_e = x_e$ and $\kappa(x)_{\bar e} = 1 - x_e$. Every sample and every complement atom is
+  droppable, with value $X_s$ and $\neg X_s$ respectively.
+- **`OMEGA_L`.** $\theta = P_X[\exists\, y \le X \text{ with } y_s = X_s \text{ for all } s \in D\ :\ g(y) = 1]$. The
+  listed samples are **fixed**, not droppable; every other sample is droppable. This is Rauzy's widening $\omega_L g$
+  with respect to the literals of the events outside $D$ (RFC §3).
+- **`NEGATION`.** The list is ignored: $\theta$ is the plain hull $\uparrow g$ of §5.1. It exists so a writer can
+  record that it deliberately reads the marked literals as ordinary negations.
+
+In every mode $\theta_{PROBABILITY} \le \theta_{OMEGA\_L} \le \theta_{NEGATION}$ (fixing variables restricts the
+existential), and $\theta_{ATOM\_SPLIT}$ has no fixed order with $\theta_{NEGATION}$. An inverted edge into an unlisted
+sample is a Boolean complement in every mode, and `always_true` samples and constants behave as in §4–§5: an
+`always_true` `SAMPLE` is a droppable event, `BITWISE_ONES` is a constant.
+
+`literal_samples` and a non-default `literal_mode` are only meaningful on a `MONOTONE_HULL_PROBABILITY` query (§8,
+rule 8).
+
 ### 5.2 Consequences for writers (informative unless marked)
 
 - $P(g) \le P(\uparrow g)$, with equality when $g$ is monotone (for example when the target's cone has no inverted
@@ -166,6 +219,15 @@ Core files have no `SubCircuit.inputs`; a profile that adds external inputs must
   function (false when all its inputs are false); for a monotone module this is its ordinary probability.
 - $\uparrow$ distributes over OR, but the hulls of mutually exclusive sequences are in general not mutually exclusive:
   the hull probability of an end state (an OR of sequences) is its own query, not the sum of the sequence values.
+- **(MUST, `ATOM_SPLIT` with a non-empty list)** A writer MUST NOT create or remove an inverted edge into a listed
+  sample. Under `ATOM_SPLIT` each such edge is the atom $\neg x_s$ of its own, droppable independently of $x_s$, so
+  removing one (for example by eliminating a single-input gate whose inverted input is a listed `SAMPLE`) or adding one
+  (for example by negation normalisation) changes $\tilde g$, hence the answer, even though $g$ is unchanged. A
+  transform that only preserves $g$ is not sufficient for these queries; the fuzzybits RFC §7.5 calls the required
+  property *atom-preserving*. For `OMEGA_L` and `NEGATION` the listed edges are ordinary complements, so any
+  $g$-preserving transform is safe for them.
+- The list is part of the query, so it survives transforms that change the circuit: a transform that removes a listed
+  event from the cone leaves a valid list entry with no effect (§5.1.1), rather than an invalid file.
 
 ### 5.3 Results (informative)
 
@@ -210,21 +272,42 @@ A conforming reader MUST verify (FlatBuffers verifier) and SHOULD validate:
    minor that introduced it (`PROBABILITY`: 1, `MONOTONE_HULL_PROBABILITY`: 2; a missing `schema_version` counts as
    minor 0). A query of either kind is valid on any target tensor; in particular hull targets may contain inverted
    inputs and non-monotone ops.
+8. (v1.2 amendment) the literal-atom fields of every `Query` (`UnknownLiteralMode`, `LiteralSampleNotSample`,
+   `LiteralSamplesNotAscending`, `LiteralFieldsOnNonHullQuery`, plus `SchemaVersionTooOld` and
+   `TensorIndexOutOfRange` where they apply):
+   - `literal_mode` is a value of `LiteralMode`;
+   - every index in `literal_samples` is in range and is the `output` of a `SAMPLE` operator;
+   - `literal_samples` is strictly ascending;
+   - `literal_samples` is non-empty, or `literal_mode` is non-default, only on a `MONOTONE_HULL_PROBABILITY` query;
+   - a query with either field set declares `schema_version` minor ≥ 2. For a non-empty list this already follows
+     from the hull kind (rule 7); the field check is independent so that a non-default mode with an empty list is
+     caught too.
+
+   Indices **outside the target's cone are valid** and have no effect: transforms may remove events from a cone
+   (§5.2), so a listed sample the target stops depending on is not an error. Runtimes MAY ignore such entries.
 
 Runtimes (normative): before evaluating any query, a runtime MUST check that it implements the kind of every query in
 the file, and MUST reject the file if it does not (at planning or load time, not after sampling). A runtime MUST NOT
 answer a query of one kind with the value of another; in particular it MUST NOT evaluate `MONOTONE_HULL_PROBABILITY`
-as `PROBABILITY`. A query kind the runtime does not know (rule 7) is a kind it does not implement.
+as `PROBABILITY`. A query kind the runtime does not know (rule 7) is a kind it does not implement. The same holds per
+`literal_mode`: a runtime that does not implement a mode MUST reject a query that uses it before sampling, and MUST NOT
+answer a mode with the value of another mode (in particular not `ATOM_SPLIT` as `NEGATION`). An unknown
+`literal_mode` value is an unknown *enum* value, not an unknown field, so §2's rule applies: reject, do not guess.
 
 ## 9. Reference API (C++, `pcfb` library)
 
-- `pcfb::io::read(path) / from_bytes(span)` → immutable `pcfb::ir::Circuit` view.
+- `pcfb::io::read(path) / from_bytes(span)` → immutable `pcfb::ir::Circuit` view. Query readers expose both literal
+  fields: `Query::literal_mode()` and `Query::literal_samples()` on the FlatBuffer, and
+  `pcfb::read_literals(query)` → `pcfb::query_literals { mode, samples }` (an absent list reads as empty).
 - `pcfb::builder`: `add_sample(name, p, event_id, source) → tensor`, `add_op(opcode, inputs, inverted, k?) → tensor`,
-  `add_query(target, kind, name)`, `set(key, value)`, `finish() → std::vector<std::byte>`; sets required metadata,
-  computes thresholds, enforces ordering, rejects query kinds it does not define, and writes the lowest
-  `schema_version` that covers the query kinds used (`pcfb::kSchemaVersionV11` or `pcfb::kSchemaVersionV12`).
+  `add_query(target, kind, name, confidence, literals)`, `set(key, value)`, `finish() → std::vector<std::byte>`; sets
+  required metadata, computes thresholds, enforces ordering, rejects query kinds it does not define, rejects the
+  literal fields rule 8 forbids, and writes the lowest `schema_version` that covers the query kinds used
+  (`pcfb::kSchemaVersionV11` or `pcfb::kSchemaVersionV12`). It writes `literal_mode` only when non-default and
+  `literal_samples` only when non-empty, so a query without literal atoms serialises exactly as before the amendment.
 - `pcfb::validate(const ir::Circuit&) → diagnostics` implementing §8; rule 7 reports `UnknownQueryKind` and
-  `SchemaVersionTooOld` (codes appended after the v1.1 codes, which keep their values).
+  `SchemaVersionTooOld`, rule 8 reports the five codes named there (all appended after the v1.1 codes, which keep their
+  values).
 - Python bindings (gguf-py analogue) are planned after v1.1 stabilises.
 
 ## 10. Conformance fixtures
@@ -241,7 +324,33 @@ evaluator caps at 24 random SAMPLE events, so the fixture test asserts `validate
 `always_true` X, Y; query `seq_boolean` (`PROBABILITY`) is exactly 0 and query `seq_hull`
 (`MONOTONE_HULL_PROBABILITY`) is exactly 0.625 = P(A ∨ B); (6) negative cases for each rule in §8 live in
 `tests/test_validate.cpp` (built with the object API, not committed as `.pcfb` files). Fixtures (1)–(3) stay
-`schema_version` `0x00010001`. `tests/exact_eval.cpp` holds test-only exhaustive evaluators for both kinds.
+`schema_version` `0x00010001`.
+
+(7) `literal_atoms.pcfb` (v1.2 amendment, `schema_version` `0x00010002`) — the literal-atom fixture, built by
+`tools/make_fixtures.cpp`. `TOP = AND(C, ¬NO_OP(¬B))`: the inner `¬B` is an inverted input on a single-input
+`BITWISE_NO_OP` gate (a gate complement, not a direct complement), the outer `¬` is an inverted input into that gate,
+`p_B = 0.25`, `p_C = 0.5`, and `B` is the only entry of `literal_samples`. Four queries share the target:
+
+| Query | Kind | Mode | Δ | Exact value |
+|---|---|---|---|---|
+| `top_boolean` | `PROBABILITY` | — | — | 0.125 = P(B)P(C) |
+| `top_atom_split` | `MONOTONE_HULL_PROBABILITY` | `ATOM_SPLIT` | {B} | 0.5 = P(C) |
+| `top_omega_l` | `MONOTONE_HULL_PROBABILITY` | `OMEGA_L` | {B} | 0.125 = P(B)P(C) |
+| `top_negation` | `MONOTONE_HULL_PROBABILITY` | `NEGATION` | list ignored | 0.125 = P(B)P(C) |
+
+All four values are exact in binary64. Derivation: $g = c \wedge b$; splitting gives $\tilde g = c \wedge \neg \bar b$,
+whose atom hull is $c$ (a witness drops the complement atom), so `ATOM_SPLIT` is $P(c)$; under `OMEGA_L` the event $b$
+is fixed and $g$ is monotone in $c$, so $\omega_L g = g$; under `NEGATION` the plain hull of $b \wedge c$ is itself.
+It also carries the ordering $\theta_{PROBABILITY} \le \theta_{OMEGA\_L} \le \theta_{NEGATION}$.
+
+`tests/exact_eval.cpp` holds test-only exhaustive evaluators for the plain hull and for all three literal modes.
+`tests/test_literal_hull.cpp` checks the two hand-computed vectors, the cross-identities of §5.1 on 500 seeded
+circuits (Δ = ∅ gives the plain hull; `OMEGA_L` with Δ = every sample gives `PROBABILITY`; `NEGATION` ignores Δ;
+$\theta_{PROBABILITY} \le \theta_{OMEGA\_L} \le \theta_{NEGATION}$), and the worked examples of the fuzzybits RFC §8.11
+(`P1`: Boolean 0.2736, `ATOM_SPLIT` 0.316, `OMEGA_L` 0.296, plain hull 0.37; `P4`: 0.3 / 0.5 / 0.3 / 0.3).
+
+Fixtures (1)–(6) are byte-identical to before the amendment: the new `Query` fields are written only when non-default
+or non-empty, and `delete_term.pcfb`'s two hull queries still carry neither.
 
 ## 11. Changes from v1.1 (summary)
 
@@ -253,3 +362,8 @@ evaluator caps at 24 random SAMPLE events, so the fixture test asserts `validate
 | Validation | rules 1–6 | rule 7: known kinds, minimum minor per kind |
 | Runtimes | — | MUST reject files with kinds they do not implement; MUST NOT substitute kinds |
 | Frozen schemas | v1 | v1, v1.1 (`schema/history/pcfb_v1_1.fbs`) |
+| Literal atoms (amendment) | — | `Query.literal_mode` (`LiteralMode`, default `ATOM_SPLIT`) and `Query.literal_samples`, both appended; §5.1.1 |
+| Validation (amendment) | — | rule 8: `UnknownLiteralMode`, `LiteralSampleNotSample`, `LiteralSamplesNotAscending`, `LiteralFieldsOnNonHullQuery` |
+| Writers (amendment) | — | MUST NOT create or remove inverted edges into listed samples under `ATOM_SPLIT` (§5.2) |
+| Runtimes (amendment) | — | MUST reject a `literal_mode` they do not implement; MUST NOT substitute modes |
+| Fixtures (amendment) | — | `literal_atoms.pcfb` (§10); every earlier fixture byte-identical |

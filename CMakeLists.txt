@@ -47,6 +47,7 @@ install(FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/include/pcfb/io.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/pcfb/error.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/pcfb/builder.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/pcfb/literal.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/pcfb/validate.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/pcfb/threshold.h
     ${PCFB_VERSION_HEADER}

@@ -105,6 +105,7 @@ struct builder::Impl {
         QueryKind kind{QueryKind::PROBABILITY};
         std::string name;
         std::vector<double> confidence;
+        query_literals literals;
     };
 
     using MetaValue = std::variant<std::string, std::int64_t, double, std::vector<std::byte>>;
@@ -116,6 +117,7 @@ struct builder::Impl {
     std::vector<Query> queries;
     std::map<std::string, MetaValue> metadata;
     std::unordered_set<std::uint32_t> event_ids;
+    std::vector<bool> is_sample; // per tensor: producer is a SAMPLE op
     bool finished{false};
 
     Result<tensor_id> check_inputs(std::span<const std::uint32_t> inputs,
@@ -145,7 +147,9 @@ struct builder::Impl {
             return std::unexpected(builder_error("builder::finish already called"));
         }
         op.output = next_tensor;
+        const bool sample = op.opcode == OpCode::SAMPLE;
         ops.push_back(std::move(op));
+        is_sample.push_back(sample);
         return next_tensor++;
     }
 
@@ -245,7 +249,7 @@ Result<builder::tensor_id> builder::add_op(OpCode opcode, std::span<const std::u
 }
 
 Result<void> builder::add_query(std::uint32_t target, QueryKind kind, std::string_view name,
-                                std::span<const double> confidence) {
+                                std::span<const double> confidence, query_literals literals) {
     if (target >= impl_->next_tensor) {
         return std::unexpected(builder_error("query target is not a defined tensor"));
     }
@@ -257,7 +261,30 @@ Result<void> builder::add_query(std::uint32_t target, QueryKind kind, std::strin
             return std::unexpected(builder_error("query confidence levels must be in (0, 1)"));
         }
     }
-    impl_->queries.push_back(Impl::Query{target, kind, std::string(name), {confidence.begin(), confidence.end()}});
+    if (detail::literal_mode_known(literals.mode) == 0) {
+        return std::unexpected(builder_error("unknown literal mode " +
+                                             std::to_string(static_cast<unsigned>(literals.mode))));
+    }
+    for (std::size_t i = 0; i < literals.samples.size(); ++i) {
+        const auto id = literals.samples[i];
+        if (id >= impl_->next_tensor || !impl_->is_sample[id]) {
+            return std::unexpected(builder_error("literal sample " + std::to_string(id) +
+                                                 " is not the output of a SAMPLE operator"));
+        }
+        if (i > 0 && literals.samples[i - 1] >= id) {
+            return std::unexpected(builder_error("literal samples must be strictly ascending"));
+        }
+        if (kind != QueryKind::MONOTONE_HULL_PROBABILITY) {
+            return std::unexpected(builder_error("literal samples are only meaningful on a "
+                                                 "MONOTONE_HULL_PROBABILITY query"));
+        }
+    }
+    if (kind != QueryKind::MONOTONE_HULL_PROBABILITY && literals.mode != LiteralMode::ATOM_SPLIT) {
+        return std::unexpected(builder_error("a non-default literal mode is only meaningful on a "
+                                             "MONOTONE_HULL_PROBABILITY query"));
+    }
+    impl_->queries.push_back(Impl::Query{target, kind, std::string(name), {confidence.begin(), confidence.end()},
+                                         std::move(literals)});
     return {};
 }
 
@@ -354,8 +381,12 @@ Result<std::vector<std::byte>> builder::finish() {
     outputs.reserve(st.queries.size());
     std::uint32_t schema_minor = 1;
     for (const auto &q : st.queries) {
+        // Written only when non-default: a query without literal atoms must serialise to the same bytes as before.
+        const auto *literal_samples =
+            q.literals.samples.empty() ? nullptr : &q.literals.samples;
         queries.push_back(CreateQueryDirect(fbb, q.target, q.kind, q.name.empty() ? nullptr : q.name.c_str(),
-                                            q.confidence.empty() ? nullptr : &q.confidence));
+                                            q.confidence.empty() ? nullptr : &q.confidence, q.literals.mode,
+                                            literal_samples));
         outputs.push_back(q.target);
         schema_minor = std::max(schema_minor, detail::query_kind_minor(q.kind));
     }

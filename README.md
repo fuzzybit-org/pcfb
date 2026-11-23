@@ -2,7 +2,7 @@
 
 > **Status:** partial — verified 2026-11-21 (`flatc --conform` v1 → v1.2 and v1.1 → v1.2 with flatc 25.2.10).
 > **Fate:** stays — the portable `.pcfb` artifact format (MIT).
-> **What works today:** schema v1.2 (docs/SPEC-v1.2.md; v1 and v1.1 frozen in `schema/history/`), mmap reader, builder and validator (spec §8), query kinds `PROBABILITY` and `MONOTONE_HULL_PROBABILITY`.
+> **What works today:** schema v1.2 (docs/SPEC-v1.2.md; v1 and v1.1 frozen in `schema/history/`), mmap reader, builder and validator (spec §8), query kinds `PROBABILITY` and `MONOTONE_HULL_PROBABILITY`, and the v1.2 literal-atom amendment (`Query.literal_mode`, `Query.literal_samples`, spec §5.1.1).
 
 a library for representing probabilistic circuits as tensors. single source of truth for the probabilistic circuit flatbuffer PCFB schema
 
@@ -72,6 +72,9 @@ erDiagram
     OpArgs ||--o| SampleArgs : "union member"
     OpArgs ||--o| MonteCarloExpectedValueOptions : "union member"
 
+    Query ||--|| QueryKind : "kind"
+    Query ||--|| LiteralMode : "literal_mode"
+
     Circuit {
         SubCircuit_array subcircuits
         Buffer_array buffers
@@ -101,6 +104,15 @@ erDiagram
 
     KofNArgs {
         uint32 k
+    }
+
+    Query {
+        uint32 target
+        QueryKind kind
+        string name
+        float64_array confidence
+        LiteralMode literal_mode
+        uint32_array literal_samples
     }
 ```
 

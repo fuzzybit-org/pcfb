@@ -74,6 +74,66 @@ const char *string_meta(const Circuit *root, const char *key) {
     return (sv && sv->value()) ? sv->value()->c_str() : nullptr;
 }
 
+/// §8.8: the literal fields of one query. Indices outside the target's cone are valid: passes may remove
+/// events from a cone (spec §5.2), so a list may name samples the target happens to stop depending on.
+void validate_literals(std::vector<Diagnostic> &out, const Query *q, const SubCircuit &sc, std::uint32_t n_tensors,
+                       std::uint32_t schema_minor, const std::string &qloc) {
+    const auto mode = q->literal_mode();
+    if (detail::literal_mode_known(mode) == 0) {
+        out.push_back({Diagnostic::Code::UnknownLiteralMode,
+                       "literal mode " + std::to_string(static_cast<unsigned>(mode)) +
+                           " is not defined in pcfb 1.2; a runtime must reject the query",
+                       qloc + ".literal_mode"});
+    }
+    const auto *samples = q->literal_samples();
+    const bool non_empty = samples != nullptr && samples->size() != 0;
+    const bool non_default_mode = mode != LiteralMode::ATOM_SPLIT;
+    if (!non_empty && !non_default_mode) {
+        return;
+    }
+    // The hull kind already requires minor >= 2; check the literal fields on their own account too.
+    if (schema_minor < 2) {
+        out.push_back({Diagnostic::Code::SchemaVersionTooOld,
+                       "query literal fields require schema_version minor >= 2, file declares " +
+                           std::to_string(schema_minor),
+                       qloc + ".literal_samples"});
+    }
+    if (q->kind() != QueryKind::MONOTONE_HULL_PROBABILITY) {
+        out.push_back({Diagnostic::Code::LiteralFieldsOnNonHullQuery,
+                       "literal samples and a literal mode are only meaningful on a MONOTONE_HULL_PROBABILITY query",
+                       qloc + ".literal_samples"});
+    }
+    if (!non_empty) {
+        return;
+    }
+    // A tensor is a valid literal sample iff its producer is a SAMPLE op.
+    std::vector<std::uint8_t> from_sample(n_tensors, 0);
+    if (const auto *ops = sc.operators()) {
+        for (const auto *op : *ops) {
+            if (op && op->opcode() == OpCode::SAMPLE && op->output() < n_tensors) {
+                from_sample[op->output()] = 1;
+            }
+        }
+    }
+    for (flatbuffers::uoffset_t i = 0; i < samples->size(); ++i) {
+        const auto id = samples->Get(i);
+        const auto sloc = qloc + ".literal_samples[" + std::to_string(i) + "]";
+        if (id >= n_tensors) {
+            out.push_back({Diagnostic::Code::TensorIndexOutOfRange,
+                           "literal sample " + std::to_string(id) + " >= " + std::to_string(n_tensors), sloc});
+        } else if (from_sample[id] == 0) {
+            out.push_back({Diagnostic::Code::LiteralSampleNotSample,
+                           "literal sample " + std::to_string(id) + " is not the output of a SAMPLE operator", sloc});
+        }
+        if (i > 0 && samples->Get(i - 1) >= id) {
+            out.push_back({Diagnostic::Code::LiteralSamplesNotAscending,
+                           "literal sample " + std::to_string(id) + " must be strictly greater than " +
+                               std::to_string(samples->Get(i - 1)),
+                           sloc});
+        }
+    }
+}
+
 void validate_subcircuit(std::vector<Diagnostic> &out, const SubCircuit *sc, std::uint32_t si, std::uint32_t n_buffers,
                          std::uint32_t schema_minor) {
     const auto loc = path_sub(si);
@@ -273,6 +333,7 @@ void validate_subcircuit(std::vector<Diagnostic> &out, const SubCircuit *sc, std
                                    std::to_string(needed) + ", file declares " + std::to_string(schema_minor),
                                qloc + ".kind"});
             }
+            validate_literals(out, q, *sc, n_tensors, schema_minor, qloc);
         }
     }
 }

@@ -45,6 +45,11 @@ struct Diagnostic {
         // §8.7 (v1.2); appended so earlier codes keep their values
         UnknownQueryKind,
         SchemaVersionTooOld,
+        // §8.8 (v1.2 literal-atom amendment); appended so earlier codes keep their values
+        UnknownLiteralMode,
+        LiteralSampleNotSample,
+        LiteralSamplesNotAscending,
+        LiteralFieldsOnNonHullQuery,
     };
 
     Code code{Code::Ok};

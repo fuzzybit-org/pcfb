@@ -123,4 +123,60 @@ inline constexpr double kInvertedProbability = 0.125;
 inline constexpr double kDeleteTermProbability = 0.0;
 inline constexpr double kDeleteTermHullProbability = 0.625;
 
+/// Literal-atom fixture (v1.2 amendment, spec §5.1): the circuit of RFC §7.3's
+/// second vector, `g = c ∧ ¬(¬b)` with `¬b` a single-input gate over `b` and the
+/// outer `¬` a gate complement, `b` the only literal sample.
+///
+/// `p_b = 0.25`, `p_c = 0.5`. Boolean: `g = b ∧ c`, so P = 0.125.
+/// - `ATOM_SPLIT`: g̃ = c ∧ ¬b̄, whose hull drops b̄, so P = P(c) = 0.5.
+/// - `OMEGA_L`: b is fixed and g is monotone in c, so ω_L g = g and P = P(b)P(c) = 0.125.
+/// - `NEGATION`: the list is ignored, ↑g = b ∧ c, so P = P(b)P(c) = 0.125.
+inline Result<std::vector<std::byte>> literal_atoms() {
+    builder b;
+    b.name("literal_atoms");
+    pin_fixture_metadata(b);
+    auto ev_b = b.add_sample(0.25, "B", 0);
+    auto ev_c = b.add_sample(0.5, "C", 1);
+    if (!ev_b || !ev_c) {
+        return std::unexpected(ev_b ? ev_c.error() : ev_b.error());
+    }
+    // ¬b as a single-input gate (a gate complement, not a direct complement): still an inverted edge into B.
+    auto not_b = b.add_op(OpCode::BITWISE_NO_OP, {}, std::array<std::uint32_t, 1>{*ev_b}, std::nullopt, "not_b");
+    if (!not_b) {
+        return std::unexpected(not_b.error());
+    }
+    // g = c ∧ ¬(¬b): the outer ¬ is an inverted input edge into the gate `not_b`.
+    auto g = b.add_op(OpCode::BITWISE_AND, std::array<std::uint32_t, 1>{*ev_c}, std::array<std::uint32_t, 1>{*not_b},
+                      std::nullopt, "top");
+    if (!g) {
+        return std::unexpected(g.error());
+    }
+    const std::vector<std::uint32_t> literal_b{*ev_b};
+    if (auto q = b.add_query(*g, QueryKind::PROBABILITY, "top_boolean"); !q) {
+        return std::unexpected(q.error());
+    }
+    if (auto q = b.add_query(*g, QueryKind::MONOTONE_HULL_PROBABILITY, "top_atom_split", {},
+                             query_literals{LiteralMode::ATOM_SPLIT, literal_b});
+        !q) {
+        return std::unexpected(q.error());
+    }
+    if (auto q = b.add_query(*g, QueryKind::MONOTONE_HULL_PROBABILITY, "top_omega_l", {},
+                             query_literals{LiteralMode::OMEGA_L, literal_b});
+        !q) {
+        return std::unexpected(q.error());
+    }
+    // NEGATION with an empty list: a non-default mode and no samples, so the file carries the mode alone.
+    if (auto q = b.add_query(*g, QueryKind::MONOTONE_HULL_PROBABILITY, "top_negation", {},
+                             query_literals{LiteralMode::NEGATION, {}});
+        !q) {
+        return std::unexpected(q.error());
+    }
+    return b.finish();
+}
+
+inline constexpr double kLiteralAtomsProbability = 0.125;
+inline constexpr double kLiteralAtomsAtomSplit = 0.5;
+inline constexpr double kLiteralAtomsOmegaL = 0.125;
+inline constexpr double kLiteralAtomsNegation = 0.125;
+
 } // namespace pcfb::fixtures

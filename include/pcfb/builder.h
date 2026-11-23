@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "pcfb/error.h"
+#include "pcfb/literal.h"
 #include "pcfb_generated.h"
 
 namespace pcfb {
@@ -62,8 +63,15 @@ public:
 
     /// Rejects kinds this library does not define. Several queries may share a
     /// target (e.g. PROBABILITY and MONOTONE_HULL_PROBABILITY of one sequence).
+    ///
+    /// `literals` is written only when it differs from the defaults (mode
+    /// `ATOM_SPLIT`, no samples), so files without literal atoms are
+    /// byte-identical to v1.2 files produced before this field existed. A
+    /// non-default mode or a non-empty list on a `PROBABILITY` query is
+    /// rejected, as is an unsorted list or an index that is not a `SAMPLE`
+    /// output.
     Result<void> add_query(std::uint32_t target, QueryKind kind = QueryKind::PROBABILITY, std::string_view name = {},
-                           std::span<const double> confidence = {});
+                           std::span<const double> confidence = {}, query_literals literals = {});
 
     Result<void> set(std::string_view key, std::string_view value);
     Result<void> set(std::string_view key, std::int64_t value);

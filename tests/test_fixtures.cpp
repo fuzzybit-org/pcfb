@@ -50,6 +50,7 @@ TEST_CASE("conformance fixtures regenerate and match committed bytes", "[fixture
     check_fixture("kofn.pcfb", pcfb::fixtures::kofn(), pcfb::fixtures::kKofnProbability);
     check_fixture("inverted.pcfb", pcfb::fixtures::inverted(), pcfb::fixtures::kInvertedProbability);
     check_fixture("delete_term.pcfb", pcfb::fixtures::delete_term(), pcfb::fixtures::kDeleteTermProbability);
+    check_fixture("literal_atoms.pcfb", pcfb::fixtures::literal_atoms(), pcfb::fixtures::kLiteralAtomsProbability);
 }
 
 TEST_CASE("v1.1 fixtures keep schema_version 0x00010001", "[fixtures]") {
