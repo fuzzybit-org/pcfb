@@ -3,7 +3,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -349,5 +351,55 @@ TEST_CASE("§8.7 query kinds and schema minor", "[validate][hull]") {
         m.schema_version = 0x00010009u;
         add_query(m, 1, static_cast<pcfb::QueryKind>(200));
         REQUIRE(has_code(validate_bytes(pack(m)), pcfb::Diagnostic::Code::UnknownQueryKind));
+    }
+}
+
+TEST_CASE("§8.9 query groups (v1.2 amendment)", "[validate][groups]") {
+    // valid_skeleton() has one PROBABILITY query on tensor 1; this adds a second on tensor 0 and a v1.2 version.
+    auto grouped = [](std::vector<pcfb::QueryTerm> terms) {
+        auto m = valid_skeleton();
+        m.schema_version = pcfb::kSchemaVersionV12;
+        auto q = std::make_unique<pcfb::QueryT>();
+        q->target = 0;
+        m.subcircuits[0]->queries.push_back(std::move(q));
+        auto group = std::make_unique<pcfb::QueryGroupT>();
+        group->name = "TOP";
+        group->unit = "per-year";
+        group->terms = std::move(terms);
+        m.subcircuits[0]->query_groups.push_back(std::move(group));
+        return m;
+    };
+
+    SECTION("A group of distinct queries of one kind with finite weights is valid") {
+        auto m = grouped({pcfb::QueryTerm(0, 20.0), pcfb::QueryTerm(1, 0.0)});
+        REQUIRE(validate_bytes(pack(m)).empty());
+    }
+    SECTION("An empty group is rejected") {
+        auto m = grouped({});
+        REQUIRE(has_code(validate_bytes(pack(m)), pcfb::Diagnostic::Code::EmptyQueryGroup));
+    }
+    SECTION("A term naming no query is rejected") {
+        auto m = grouped({pcfb::QueryTerm(2, 1.0)});
+        REQUIRE(has_code(validate_bytes(pack(m)), pcfb::Diagnostic::Code::QueryGroupTermOutOfRange));
+    }
+    SECTION("A query listed twice is rejected") {
+        auto m = grouped({pcfb::QueryTerm(0, 1.0), pcfb::QueryTerm(0, 2.0)});
+        REQUIRE(has_code(validate_bytes(pack(m)), pcfb::Diagnostic::Code::QueryGroupDuplicateTerm));
+    }
+    SECTION("Negative and non-finite weights are rejected") {
+        for (const double weight : {-1.0, std::numeric_limits<double>::infinity(), std::nan("")}) {
+            auto m = grouped({pcfb::QueryTerm(0, weight)});
+            REQUIRE(has_code(validate_bytes(pack(m)), pcfb::Diagnostic::Code::QueryGroupBadWeight));
+        }
+    }
+    SECTION("Queries of different kinds in one group are rejected") {
+        auto m = grouped({pcfb::QueryTerm(0, 1.0), pcfb::QueryTerm(1, 1.0)});
+        m.subcircuits[0]->queries[1]->kind = pcfb::QueryKind::MONOTONE_HULL_PROBABILITY;
+        REQUIRE(has_code(validate_bytes(pack(m)), pcfb::Diagnostic::Code::QueryGroupMixedKinds));
+    }
+    SECTION("Groups need minor >= 2") {
+        auto m = grouped({pcfb::QueryTerm(0, 1.0)});
+        m.schema_version = pcfb::kSchemaVersionV11;
+        REQUIRE(has_code(validate_bytes(pack(m)), pcfb::Diagnostic::Code::SchemaVersionTooOld));
     }
 }

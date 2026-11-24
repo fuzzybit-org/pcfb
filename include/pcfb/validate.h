@@ -50,6 +50,12 @@ struct Diagnostic {
         LiteralSampleNotSample,
         LiteralSamplesNotAscending,
         LiteralFieldsOnNonHullQuery,
+        // §8.9 (v1.2 query-group amendment); appended so earlier codes keep their values
+        EmptyQueryGroup,
+        QueryGroupTermOutOfRange,
+        QueryGroupDuplicateTerm,
+        QueryGroupBadWeight,
+        QueryGroupMixedKinds,
     };
 
     Code code{Code::Ok};

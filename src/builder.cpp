@@ -108,6 +108,12 @@ struct builder::Impl {
         query_literals literals;
     };
 
+    struct QueryGroup {
+        std::string name;
+        std::string unit;
+        std::vector<query_term> terms;
+    };
+
     using MetaValue = std::variant<std::string, std::int64_t, double, std::vector<std::byte>>;
 
     std::string circuit_name;
@@ -115,6 +121,7 @@ struct builder::Impl {
     std::uint32_t next_tensor{0};
     std::vector<Op> ops;
     std::vector<Query> queries;
+    std::vector<QueryGroup> query_groups;
     std::map<std::string, MetaValue> metadata;
     std::unordered_set<std::uint32_t> event_ids;
     std::vector<bool> is_sample; // per tensor: producer is a SAMPLE op
@@ -288,6 +295,32 @@ Result<void> builder::add_query(std::uint32_t target, QueryKind kind, std::strin
     return {};
 }
 
+Result<void> builder::add_query_group(std::string_view name, std::string_view unit,
+                                      std::span<const query_term> terms) {
+    if (terms.empty()) {
+        return std::unexpected(builder_error("a query group needs at least one term"));
+    }
+    std::unordered_set<std::uint32_t> seen;
+    for (const auto &term : terms) {
+        if (term.query >= impl_->queries.size()) {
+            return std::unexpected(builder_error("query group term " + std::to_string(term.query) +
+                                                 " is not an added query"));
+        }
+        if (!seen.insert(term.query).second) {
+            return std::unexpected(builder_error("query group lists query " + std::to_string(term.query) + " twice"));
+        }
+        if (!std::isfinite(term.weight) || term.weight < 0.0) {
+            return std::unexpected(builder_error("query group weights must be finite and >= 0"));
+        }
+        if (impl_->queries[term.query].kind != impl_->queries[terms.front().query].kind) {
+            return std::unexpected(builder_error("the queries of a group must share one kind"));
+        }
+    }
+    impl_->query_groups.push_back(
+        Impl::QueryGroup{std::string(name), std::string(unit), {terms.begin(), terms.end()}});
+    return {};
+}
+
 Result<void> builder::set(std::string_view key, std::string_view value) {
     if (!valid_metadata_key(key)) {
         return std::unexpected(builder_error("metadata keys must be lowercase and dot-separated"));
@@ -391,8 +424,22 @@ Result<std::vector<std::byte>> builder::finish() {
         schema_minor = std::max(schema_minor, detail::query_kind_minor(q.kind));
     }
 
+    // Written only when non-empty: a file without groups serialises to the same bytes as before the amendment.
+    std::vector<flatbuffers::Offset<QueryGroup>> groups;
+    groups.reserve(st.query_groups.size());
+    for (const auto &g : st.query_groups) {
+        std::vector<QueryTerm> terms;
+        terms.reserve(g.terms.size());
+        for (const auto &t : g.terms) {
+            terms.emplace_back(t.query, t.weight);
+        }
+        groups.push_back(CreateQueryGroupDirect(fbb, g.name.empty() ? nullptr : g.name.c_str(),
+                                                g.unit.empty() ? nullptr : g.unit.c_str(), &terms));
+        schema_minor = std::max(schema_minor, detail::query_groups_minor);
+    }
     auto sub = CreateSubCircuitDirect(fbb, &tensors, nullptr, &outputs, &operators,
-                                      st.circuit_name.empty() ? nullptr : st.circuit_name.c_str(), &queries);
+                                      st.circuit_name.empty() ? nullptr : st.circuit_name.c_str(), &queries,
+                                      groups.empty() ? nullptr : &groups);
 
     std::vector<flatbuffers::Offset<SubCircuit>> subcircuits{sub};
 

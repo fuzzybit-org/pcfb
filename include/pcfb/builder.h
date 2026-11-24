@@ -19,6 +19,12 @@
 
 namespace pcfb {
 
+/// One term of a query group: `weight` times the result of the query added `query`-th (0-based) by `add_query`.
+struct query_term {
+    std::uint32_t query{};
+    double weight{1.0};
+};
+
 /// Incremental writer for a single core-1.1 subcircuit.
 ///
 /// Tensor ids are assigned in SSA order: each `add_sample` / `add_op` appends
@@ -26,9 +32,9 @@ namespace pcfb {
 /// already-created tensors, which is exactly spec §3.2 (topological order +
 /// single assignment). `finish()` writes required metadata, an empty
 /// `buffers[0]`, and the lowest `schema_version` that covers the query kinds
-/// used: `0x00010001` unless a v1.2 kind (`MONOTONE_HULL_PROBABILITY`) is
-/// present, then `0x00010002`. Files without v1.2 features are therefore
-/// byte-identical to v1.1 builder output.
+/// used: `0x00010001` unless a v1.2 feature (a `MONOTONE_HULL_PROBABILITY`
+/// query or a query group) is present, then `0x00010002`. Files without v1.2
+/// features are therefore byte-identical to v1.1 builder output.
 class builder {
 public:
     using tensor_id = std::uint32_t;
@@ -72,6 +78,13 @@ public:
     /// output.
     Result<void> add_query(std::uint32_t target, QueryKind kind = QueryKind::PROBABILITY, std::string_view name = {},
                            std::span<const double> confidence = {}, query_literals literals = {});
+
+    /// A named weighted sum of query results (spec §5.4), such as an initiating-event frequency
+    /// `sum_i f_i * P(target | initiator i)`. `terms` index the queries added so far, in `add_query` order. Rejected:
+    /// no terms, an index that is not an added query, a query listed twice, queries of different kinds, and a weight
+    /// that is negative or not finite. Written only when at least one group exists; a file with groups declares minor
+    /// >= 2. `unit` labels the summed value (empty: dimensionless).
+    Result<void> add_query_group(std::string_view name, std::string_view unit, std::span<const query_term> terms);
 
     Result<void> set(std::string_view key, std::string_view value);
     Result<void> set(std::string_view key, std::int64_t value);

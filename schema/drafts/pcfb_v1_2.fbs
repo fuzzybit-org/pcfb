@@ -122,6 +122,21 @@ table Query {
   literal_samples: [uint32]; // sorted, duplicate-free SAMPLE outputs; needs minor >= 2
 }
 
+// v1.2 amendment (spec §5.4): one term of a query group, `weight` times the result of `queries[query]`.
+struct QueryTerm {
+  query: uint32;   // index into SubCircuit.queries
+  weight: float64; // finite and >= 0
+}
+
+// v1.2 amendment (spec §5.4): a named weighted sum of query results, such as an initiating-event frequency
+// sum_i f_i * P(target | initiator i). The queries keep their own meaning: a runtime that ignores groups still
+// answers every query correctly.
+table QueryGroup {
+  name: string;
+  unit: string;        // unit of the summed value, e.g. "per-year"; absent or empty: dimensionless
+  terms: [QueryTerm];  // non-empty; distinct queries of one kind; needs minor >= 2
+}
+
 table SubCircuit {
   tensors: [Tensor];
   inputs: [uint32];
@@ -129,6 +144,7 @@ table SubCircuit {
   operators: [Op];   // topological order, single assignment
   name: string;
   queries: [Query];  // v1.1
+  query_groups: [QueryGroup]; // v1.2 amendment; written only when non-empty
 }
 
 table Buffer {

@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -122,6 +123,67 @@ void validate_literals(std::vector<Diagnostic> &out, const Query *q, std::span<c
                            "literal sample " + std::to_string(id) + " must be strictly greater than " +
                                std::to_string(samples->Get(i - 1)),
                            sloc});
+        }
+    }
+}
+
+/// §8.9: the query groups of one subcircuit.
+void validate_query_groups(std::vector<Diagnostic> &out, const SubCircuit *sc, std::uint32_t schema_minor,
+                           const std::string &loc) {
+    const auto *groups = sc->query_groups();
+    if (!groups || groups->size() == 0) {
+        return;
+    }
+    if (schema_minor < detail::query_groups_minor) {
+        out.push_back({Diagnostic::Code::SchemaVersionTooOld,
+                       "query groups require schema_version minor >= " +
+                           std::to_string(detail::query_groups_minor) + ", file declares " +
+                           std::to_string(schema_minor),
+                       loc + ".query_groups"});
+    }
+    const auto *queries = sc->queries();
+    const std::uint32_t n_queries = queries ? queries->size() : 0;
+    for (flatbuffers::uoffset_t gi = 0; gi < groups->size(); ++gi) {
+        const auto *group = groups->Get(gi);
+        if (!group) {
+            continue;
+        }
+        const auto gloc = loc + ".query_groups[" + std::to_string(gi) + "]";
+        const auto *terms = group->terms();
+        if (!terms || terms->size() == 0) {
+            out.push_back({Diagnostic::Code::EmptyQueryGroup, "query group has no terms", gloc + ".terms"});
+            continue;
+        }
+        std::unordered_set<std::uint32_t> seen;
+        std::optional<QueryKind> kind;
+        for (flatbuffers::uoffset_t ti = 0; ti < terms->size(); ++ti) {
+            const auto *term = terms->Get(ti);
+            const auto tloc = gloc + ".terms[" + std::to_string(ti) + "]";
+            if (term->query() >= n_queries) {
+                out.push_back({Diagnostic::Code::QueryGroupTermOutOfRange,
+                               "query " + std::to_string(term->query()) + " >= " + std::to_string(n_queries),
+                               tloc + ".query"});
+                continue;
+            }
+            if (!seen.insert(term->query()).second) {
+                out.push_back({Diagnostic::Code::QueryGroupDuplicateTerm,
+                               "query " + std::to_string(term->query()) + " is listed twice", tloc + ".query"});
+            }
+            if (!std::isfinite(term->weight()) || term->weight() < 0.0) {
+                out.push_back({Diagnostic::Code::QueryGroupBadWeight,
+                               "weight " + std::to_string(term->weight()) + " is negative or not finite",
+                               tloc + ".weight"});
+            }
+            const auto *query = queries->Get(term->query());
+            if (query == nullptr) {
+                continue;
+            }
+            if (!kind) {
+                kind = query->kind();
+            } else if (*kind != query->kind()) {
+                out.push_back({Diagnostic::Code::QueryGroupMixedKinds,
+                               "the queries of a group must share one kind", tloc + ".query"});
+            }
         }
     }
 }
@@ -339,6 +401,7 @@ void validate_subcircuit(std::vector<Diagnostic> &out, const SubCircuit *sc, std
             validate_literals(out, q, from_sample, n_tensors, schema_minor, qloc);
         }
     }
+    validate_query_groups(out, sc, schema_minor, loc);
 }
 
 } // namespace
