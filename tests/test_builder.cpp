@@ -8,6 +8,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <vector>
 
 TEST_CASE("builder computes thresholds and always_true", "[builder]") {
     pcfb::builder b;
@@ -260,4 +261,68 @@ TEST_CASE("builder names tensors from their ops on large circuits", "[builder]")
     REQUIRE(tensors->Get(0)->name()->str() == "x");
     REQUIRE(tensors->Get(2)->name()->str() == "even");
     REQUIRE(tensors->Get(3)->name() == nullptr);
+}
+
+TEST_CASE("builder writes query groups and raises the minor to 2", "[builder][groups]") {
+    // F(T) = 20 * P(T | IE1) + 3 * P(T | IE2): two conditioned PROBABILITY queries in one group.
+    pcfb::builder b;
+    auto a = b.add_sample(0.01, "A", 0);
+    auto c = b.add_sample(0.02, "B", 1);
+    REQUIRE(a);
+    REQUIRE(c);
+    REQUIRE(b.add_query(*a, pcfb::QueryKind::PROBABILITY, "TOP|IE1"));
+    REQUIRE(b.add_query(*c, pcfb::QueryKind::PROBABILITY, "TOP|IE2"));
+    const std::array terms{pcfb::query_term{0, 20.0}, pcfb::query_term{1, 3.0}};
+    REQUIRE(b.add_query_group("TOP", "per-year", terms));
+    auto bytes = b.finish();
+    REQUIRE(bytes);
+    auto circuit = pcfb::io::from_bytes(*bytes);
+    REQUIRE(circuit);
+    REQUIRE(circuit->schema_version() == pcfb::kSchemaVersionV12);
+    REQUIRE(pcfb::validate(*circuit).empty());
+    const auto *groups = circuit->subcircuits()->Get(0)->query_groups();
+    REQUIRE(groups != nullptr);
+    REQUIRE(groups->size() == 1);
+    const auto *group = groups->Get(0);
+    REQUIRE(group->name()->str() == "TOP");
+    REQUIRE(group->unit()->str() == "per-year");
+    REQUIRE(group->terms()->size() == 2);
+    REQUIRE(group->terms()->Get(0)->query() == 0);
+    REQUIRE(group->terms()->Get(0)->weight() == 20.0);
+    REQUIRE(group->terms()->Get(1)->query() == 1);
+    REQUIRE(group->terms()->Get(1)->weight() == 3.0);
+}
+
+TEST_CASE("a file without query groups is byte-identical to one written before the amendment", "[builder][groups]") {
+    pcfb::builder b;
+    auto a = b.add_sample(0.5, "A", 0);
+    REQUIRE(a);
+    REQUIRE(b.add_query(*a));
+    auto bytes = b.finish();
+    REQUIRE(bytes);
+    auto circuit = pcfb::io::from_bytes(*bytes);
+    REQUIRE(circuit);
+    REQUIRE(circuit->schema_version() == pcfb::kSchemaVersionV11);
+    REQUIRE(circuit->subcircuits()->Get(0)->query_groups() == nullptr);
+}
+
+TEST_CASE("builder rejects malformed query groups", "[builder][groups]") {
+    pcfb::builder b;
+    auto a = b.add_sample(0.5, "A", 0);
+    REQUIRE(a);
+    REQUIRE(b.add_query(*a, pcfb::QueryKind::PROBABILITY, "p"));
+    REQUIRE(b.add_query(*a, pcfb::QueryKind::MONOTONE_HULL_PROBABILITY, "h"));
+    auto rejects = [&b](std::vector<pcfb::query_term> terms) {
+        auto result = b.add_query_group("g", "", terms);
+        REQUIRE_FALSE(result);
+        REQUIRE(result.error().code == pcfb::Error::Code::BuilderError);
+    };
+    rejects({});
+    rejects({{2, 1.0}});
+    rejects({{0, 1.0}, {0, 1.0}});
+    rejects({{0, -1.0}});
+    rejects({{0, std::numeric_limits<double>::infinity()}});
+    rejects({{0, 1.0}, {1, 1.0}});
+    REQUIRE(b.add_query_group("g", "", std::vector<pcfb::query_term>{{1, 0.5}}));
+    REQUIRE(b.finish());
 }

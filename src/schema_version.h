@@ -32,4 +32,7 @@ constexpr std::uint32_t literal_mode_minor(LiteralMode mode) noexcept {
     return 0;
 }
 
+/// Minor version (of major 1) that introduced `SubCircuit.query_groups` (the v1.2 query-group amendment).
+constexpr std::uint32_t query_groups_minor = 2;
+
 } // namespace pcfb::detail

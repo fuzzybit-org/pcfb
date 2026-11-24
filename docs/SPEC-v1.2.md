@@ -238,6 +238,50 @@ Result formats are runtime-defined. For `MONOTONE_HULL_PROBABILITY`, sampling ru
 estimate and interval, the per-run estimates of the lower and upper bound functions they used and the fraction of
 samples that needed an exact check (RFC §7.6).
 
+### 5.4 Query groups (v1.2 amendment)
+
+```
+struct QueryTerm {
+  query: uint32;                  // index into SubCircuit.queries
+  weight: float64;                // finite, >= 0
+}
+
+table QueryGroup {
+  name: string;
+  unit: string;                   // unit of the summed value; absent or empty: dimensionless
+  terms: [QueryTerm];             // non-empty
+}
+
+table SubCircuit {
+  ...
+  query_groups: [QueryGroup];     // appended; written only when non-empty
+}
+```
+
+A query group names a weighted sum of query results:
+
+$$	heta_{group} = \sum_{t \in terms} w_t \, 	heta_{q_t},$$
+
+where $	heta_q$ is the value of query $q$ (§5.1). The terms list distinct queries of one kind. A group adds a
+quantity; it changes no query. Each query keeps the meaning of §5.1, so a runtime that does not implement groups still
+answers every query correctly, and the file stays usable to it. Groups are therefore not subject to the
+kind-rejection rule of §8.
+
+The motivating use is an initiating-event frequency. A target whose cone holds initiating events with frequencies
+$f_1, \dots, f_m$ is written as one query per initiator, on the target with initiator $i$ set to `BITWISE_ONES` and
+the other initiators to `BITWISE_ZEROS`. The group with weights $f_i$ is then
+$F = \sum_i f_i \, P(	ext{target} \mid I_i = 1, I_j = 0 	ext{ for } j 
+e i)$, in `unit` (for example
+`per-year`). Its value is not a probability and may exceed 1.
+
+`unit` is a label for the reader of the results. This specification defines no unit vocabulary, and runtimes MUST
+NOT convert or reinterpret a value by its unit.
+
+Results (informative): a sampling runtime that answers all terms from one set of samples has correlated term
+estimates. An interval for the group can combine the term intervals conservatively: with $m$ terms, each at level
+$1 - \alpha$, the interval $[\sum w_t \, lo_t, \sum w_t \, hi_t]$ has coverage at least $1 - m\alpha$ by the
+union bound, whatever the correlation.
+
 ## 6. Metadata (key–value)
 
 `Circuit.metadata: [KeyValue]`, values are a union of string / int64 / float64 / bytes. Keys are lowercase,
@@ -288,6 +332,13 @@ A conforming reader MUST verify (FlatBuffers verifier) and SHOULD validate:
 
    Indices **outside the target's cone are valid** and have no effect: transforms may remove events from a cone
    (§5.2), so a listed sample the target stops depending on is not an error. Runtimes MAY ignore such entries.
+9. (v1.2 amendment) every `QueryGroup` (§5.4; `EmptyQueryGroup`, `QueryGroupTermOutOfRange`,
+   `QueryGroupDuplicateTerm`, `QueryGroupBadWeight`, `QueryGroupMixedKinds`, plus `SchemaVersionTooOld`):
+   - `terms` is non-empty;
+   - every `QueryTerm.query` is the index of a query of the same subcircuit, and no query is listed twice in a group;
+   - every weight is finite and ≥ 0;
+   - the queries of a group share one kind;
+   - a subcircuit with a non-empty `query_groups` declares `schema_version` minor ≥ 2.
 
 Runtimes (normative): before evaluating any query, a runtime MUST check that it implements the kind of every query in
 the file, and MUST reject the file if it does not (at planning or load time, not after sampling). A runtime MUST NOT
@@ -322,9 +373,11 @@ absent or empty, true otherwise, so a runtime rejects exactly when it returns tr
   literal fields rule 8 forbids, and writes the lowest `schema_version` that covers the query kinds used
   (`pcfb::kSchemaVersionV11` or `pcfb::kSchemaVersionV12`). It writes `literal_mode` only when non-default and
   `literal_samples` only when non-empty, so a query without literal atoms serialises exactly as before the amendment.
+  `add_query_group(name, unit, terms)` adds a §5.4 group over the queries added so far, rejects what rule 9 forbids,
+  and raises the declared minor to 2; `query_groups` is written only when a group exists.
 - `pcfb::validate(const ir::Circuit&) → diagnostics` implementing §8; rule 7 reports `UnknownQueryKind` and
-  `SchemaVersionTooOld`, rule 8 reports the five codes named there (all appended after the v1.1 codes, which keep their
-  values).
+  `SchemaVersionTooOld`, rule 8 reports the five codes named there, rule 9 the five codes named there (all appended after
+  the v1.1 codes, which keep their values).
 - Python bindings (gguf-py analogue) are planned after v1.1 stabilises.
 
 ## 10. Conformance fixtures
@@ -384,3 +437,5 @@ or non-empty, and `delete_term.pcfb`'s two hull queries still carry neither.
 | Writers (amendment) | — | MUST NOT create or remove inverted edges into listed samples under `ATOM_SPLIT` (§5.2) |
 | Runtimes (amendment) | — | MUST reject a `literal_mode` they do not implement **only when `literal_samples` is non-empty**; MUST NOT substitute modes; a query with an empty list is the plain hull whatever its mode, so a plain-hull runtime answers it |
 | Fixtures (amendment) | — | `literal_atoms.pcfb` (§10); every earlier fixture byte-identical |
+| Query groups (amendment) | — | `SubCircuit.query_groups` (`QueryGroup`, `QueryTerm`), appended: weighted sums of query results with a unit label, such as initiating-event frequencies; §5.4 |
+| Validation (amendment) | — | rule 9: `EmptyQueryGroup`, `QueryGroupTermOutOfRange`, `QueryGroupDuplicateTerm`, `QueryGroupBadWeight`, `QueryGroupMixedKinds` |
