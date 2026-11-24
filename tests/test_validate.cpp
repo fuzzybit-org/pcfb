@@ -195,6 +195,115 @@ TEST_CASE("§8.6 unique event_id and at least one query", "[validate]") {
     }
 }
 
+TEST_CASE("§8.8 literal-atom fields (v1.2 amendment)", "[validate][literal]") {
+    // valid_skeleton() gives sample A (tensor 0) and NO_OP(A) (tensor 1). This adds sample B (tensor 2), the hull
+    // target gate AND(A, ¬B) (tensor 3) and an out-of-cone sample C (tensor 4).
+    auto hull_skeleton = [] {
+        auto m = valid_skeleton();
+        m.schema_version = pcfb::kSchemaVersionV12;
+        auto add_sample = [&m](std::uint32_t output, std::uint32_t event_id, double p) {
+            auto sa = std::make_unique<pcfb::SampleArgsT>();
+            sa->probability = p;
+            sa->threshold = pcfb::probability_to_threshold(p);
+            sa->event_id = event_id;
+            sa->source = pcfb::SampleSource::BASIC_EVENT;
+            auto op = std::make_unique<pcfb::OpT>();
+            op->opcode = pcfb::OpCode::SAMPLE;
+            op->output = output;
+            op->args.Set(*sa);
+            m.subcircuits[0]->operators.push_back(std::move(op));
+        };
+        add_sample(2, 1, 0.25);
+        auto gate = std::make_unique<pcfb::OpT>();
+        gate->opcode = pcfb::OpCode::BITWISE_AND;
+        gate->inputs = {0};
+        gate->inverted_inputs = {2};
+        gate->output = 3;
+        m.subcircuits[0]->operators.push_back(std::move(gate));
+        add_sample(4, 2, 0.75);
+        for (int i = 0; i < 3; ++i) { // valid_skeleton() already declares tensors 0 and 1
+            auto t = std::make_unique<pcfb::TensorT>();
+            t->type = pcfb::TensorType::BIT;
+            t->buffer_idx = 0;
+            m.subcircuits[0]->tensors.push_back(std::move(t));
+        }
+        m.subcircuits[0]->queries[0]->target = 3;
+        m.subcircuits[0]->queries[0]->kind = pcfb::QueryKind::MONOTONE_HULL_PROBABILITY;
+        return m;
+    };
+    auto with_literals = [](pcfb::CircuitT &m, pcfb::LiteralMode mode, std::vector<std::uint32_t> samples) {
+        auto *q = m.subcircuits[0]->queries[0].get();
+        q->literal_mode = mode;
+        q->literal_samples = std::move(samples);
+    };
+
+    SECTION("A hull query with sorted SAMPLE indices is valid") {
+        auto m = hull_skeleton();
+        with_literals(m, pcfb::LiteralMode::ATOM_SPLIT, {0, 2}); // samples A and B, both in the cone
+        REQUIRE(validate_bytes(pack(m)).empty());
+    }
+    SECTION("Every mode on a hull query with an empty list is valid") {
+        for (auto mode : {pcfb::LiteralMode::ATOM_SPLIT, pcfb::LiteralMode::OMEGA_L, pcfb::LiteralMode::NEGATION}) {
+            auto m = hull_skeleton();
+            with_literals(m, mode, {});
+            REQUIRE(validate_bytes(pack(m)).empty());
+        }
+    }
+    SECTION("Indices outside the target cone are valid and have no effect") {
+        auto m = hull_skeleton();
+        with_literals(m, pcfb::LiteralMode::ATOM_SPLIT, {2, 4}); // 4 = sample C, outside the cone of tensor 3
+        REQUIRE(validate_bytes(pack(m)).empty());
+    }
+    SECTION("An unknown literal mode is rejected") {
+        auto m = hull_skeleton();
+        with_literals(m, static_cast<pcfb::LiteralMode>(9), {2});
+        REQUIRE(has_code(validate_bytes(pack(m)), pcfb::Diagnostic::Code::UnknownLiteralMode));
+    }
+    SECTION("An unknown literal mode is rejected even without samples") {
+        auto m = hull_skeleton();
+        with_literals(m, static_cast<pcfb::LiteralMode>(9), {});
+        REQUIRE(has_code(validate_bytes(pack(m)), pcfb::Diagnostic::Code::UnknownLiteralMode));
+    }
+    SECTION("An index that is not a SAMPLE output is rejected") {
+        auto m = hull_skeleton();
+        with_literals(m, pcfb::LiteralMode::ATOM_SPLIT, {3}); // the AND gate
+        REQUIRE(has_code(validate_bytes(pack(m)), pcfb::Diagnostic::Code::LiteralSampleNotSample));
+    }
+    SECTION("An out-of-range index is rejected") {
+        auto m = hull_skeleton();
+        with_literals(m, pcfb::LiteralMode::ATOM_SPLIT, {77});
+        REQUIRE(has_code(validate_bytes(pack(m)), pcfb::Diagnostic::Code::TensorIndexOutOfRange));
+    }
+    SECTION("Descending indices are rejected") {
+        auto m = hull_skeleton();
+        with_literals(m, pcfb::LiteralMode::ATOM_SPLIT, {4, 2});
+        REQUIRE(has_code(validate_bytes(pack(m)), pcfb::Diagnostic::Code::LiteralSamplesNotAscending));
+    }
+    SECTION("Duplicate indices are rejected") {
+        auto m = hull_skeleton();
+        with_literals(m, pcfb::LiteralMode::OMEGA_L, {2, 2});
+        REQUIRE(has_code(validate_bytes(pack(m)), pcfb::Diagnostic::Code::LiteralSamplesNotAscending));
+    }
+    SECTION("Literal samples on a PROBABILITY query are rejected") {
+        auto m = hull_skeleton();
+        m.subcircuits[0]->queries[0]->kind = pcfb::QueryKind::PROBABILITY;
+        m.subcircuits[0]->queries[0]->literal_samples = {2};
+        REQUIRE(has_code(validate_bytes(pack(m)), pcfb::Diagnostic::Code::LiteralFieldsOnNonHullQuery));
+    }
+    SECTION("A non-default literal mode on a PROBABILITY query is rejected") {
+        auto m = hull_skeleton();
+        m.subcircuits[0]->queries[0]->kind = pcfb::QueryKind::PROBABILITY;
+        m.subcircuits[0]->queries[0]->literal_mode = pcfb::LiteralMode::OMEGA_L;
+        REQUIRE(has_code(validate_bytes(pack(m)), pcfb::Diagnostic::Code::LiteralFieldsOnNonHullQuery));
+    }
+    SECTION("Literal fields need minor >= 2") {
+        auto m = hull_skeleton();
+        m.schema_version = pcfb::kSchemaVersionV11;
+        with_literals(m, pcfb::LiteralMode::ATOM_SPLIT, {2});
+        REQUIRE(has_code(validate_bytes(pack(m)), pcfb::Diagnostic::Code::SchemaVersionTooOld));
+    }
+}
+
 TEST_CASE("§8.7 query kinds and schema minor", "[validate][hull]") {
     auto add_query = [](pcfb::CircuitT &m, std::uint32_t target, pcfb::QueryKind kind) {
         auto q = std::make_unique<pcfb::QueryT>();

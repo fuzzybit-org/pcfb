@@ -14,6 +14,7 @@ add_executable(pcfb_tests
     test_builder.cpp
     test_validate.cpp
     test_fixtures.cpp
+    test_literal_hull.cpp
     test_roundtrip.cpp
     test_schema_files.cpp
     exact_eval.cpp

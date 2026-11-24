@@ -48,6 +48,7 @@
 #include "pcfb_generated.h"
 
 #include "pcfb/error.h"
+#include "pcfb/literal.h"
 
 namespace pcfb { namespace io { struct _circuit_owner_accessor; } }
 

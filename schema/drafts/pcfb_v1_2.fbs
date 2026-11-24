@@ -104,11 +104,22 @@ enum QueryKind : ubyte {
   MONOTONE_HULL_PROBABILITY = 1, // v1.2: P(some subset of the true SAMPLE inputs satisfies target); needs minor >= 2
 }
 
+// v1.2 amendment (spec §5.1): how a MONOTONE_HULL_PROBABILITY query reads the complemented edges into its
+// `literal_samples`. Unlisted samples are ordinary Boolean complements in every mode.
+enum LiteralMode : ubyte {
+  ATOM_SPLIT = 0, // default: a complement atom per listed sample, droppable and valued ¬x
+  OMEGA_L    = 1, // the listed samples are fixed to their sampled value
+  NEGATION   = 2, // the list is ignored: the plain hull
+}
+
 table Query {
   target: uint32;         // tensor index
   kind: QueryKind = PROBABILITY; // runtimes reject files with kinds they do not implement (spec §8)
   name: string;
   confidence: [float64];  // optional requested confidence levels, e.g. [0.95, 0.99]
+  // v1.2 amendment: written only when non-default / non-empty, so files without literal atoms are unchanged.
+  literal_mode: LiteralMode = ATOM_SPLIT;
+  literal_samples: [uint32]; // sorted, duplicate-free SAMPLE outputs; needs minor >= 2
 }
 
 table SubCircuit {
